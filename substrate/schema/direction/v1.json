@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/direction/v1.json",
+  "title": "direction",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "FREE KIND — documented but NOT validated on write. Guidance from the researcher to the lab assistants: what to work on, what to avoid, and what idea to try. This is a loop-internal contract, not a substrate one: the researcher writes it and lab assistants read it, both ship together, so it may change shape whenever the loop does. The substrate carries the bytes and never inspects them. Subject is bench:<name>.",
+  "type": "object",
+  "required": ["brief"],
+  "properties": {
+    "focus": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^prog:sha256:[0-9a-f]{64}$" },
+      "description": "Program branches worth mutating now, as prog: refs. Branch-level rather than idea-level steering is deliberate: it gives tighter control over where free Qwen throughput is spent. Empty or absent means assistants pick for themselves from the frontier."
+    },
+    "avoid": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^prog:sha256:[0-9a-f]{64}$" },
+      "description": "Branches established as dead ends. Stop spending here. A branch earns a place on this list by having many descendants and no improvement."
+    },
+    "brief": {
+      "type": "string",
+      "description": "The actual idea, in prose, addressed to a lab assistant. This is the single most valuable output of an expensive model, so it should be specific and falsifiable: name the change, say why it should help, and give the quantitative condition under which it nets out. Example: 'The 2^12 table is winning. Shrink it to 2^10 and compensate with one extra Newton iteration. Table Toffoli cost scales linearly in entries, so this nets out only if the refinement stays under ~400 Toffolis.'"
+    },
+    "supersedes": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Event id of the direction this replaces. Latest direction for a subject wins — that is how 'current direction' is derived from an append-only log with no mutation. The chain is kept explicit so you can read the history of what the researcher believed, in order."
+    },
+    "hypothesis": {
+      "type": ["string", "null"],
+      "pattern": "^hyp:[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "The hypothesis this direction is testing, if any. Lets several directions accumulate evidence against one claim."
+    },
+    "expires": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Optional. After this time assistants should fall back to the previous direction or to frontier-following, rather than grinding on stale guidance if the researcher has gone quiet because its budget pool is exhausted."
+    }
+  },
+  "x-frozen": []
+}

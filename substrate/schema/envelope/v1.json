@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/envelope/v1.json",
+  "title": "envelope",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "Wrapper carried by every event regardless of kind. The envelope is how the substrate navigates the log without understanding any payload. Its five frozen fields are the deepest commitment in the system.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "ts", "kind", "schema", "subject", "actor", "payload"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "ULID. Time-prefixed and lexically sortable, so the log is naturally ordered and a cursor is a plain string comparison. Never reuse; never renumber."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 UTC, millisecond precision. Redundant with the ULID prefix but kept because humans and SQL both want a real timestamp."
+    },
+    "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Four kinds are frozen (validated on write); all others are free-form."
+    },
+    "schema": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Payload schema version for THIS kind only, not a global version. Resolve against schema/<kind>/v<schema>.json to interpret the payload. Readers that encounter an unknown version should refuse rather than guess."
+    },
+    "subject": {
+      "type": "string",
+      "pattern": "^(prog|bench|pool|dir|hyp):.+$",
+      "description": "What this event is ABOUT (not who wrote it — that is `actor`), as 'type:rest'. Known types: prog:sha256:<hex>, bench:<name>, pool:<name>, dir:<ulid>, hyp:<ulid>. New types may be added freely; the 'type:rest' shape is the contract. history(subject) retrieves everything about one thing, across all actors: a program typically accumulates a commit from a lab assistant, several measurements from the verifier, and notes from the researcher, all under one subject."
+    },
+    "actor": {
+      "type": "object",
+      "description": "Provenance: who produced this event. Required as a key, but its CONTENTS are free — add fields whenever a new loop architecture needs them. This is what later answers 'did Opus-authored programs outperform Qwen mutations, per token spent?'",
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Free string naming the position in whatever architecture is current, e.g. 'researcher', 'lab_assistant', 'verifier', 'human'. Deliberately not an enum: a future loop that isn't researcher/assistant shaped must not require a schema change."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier, or absent for pure-code actors. e.g. 'claude-opus-5', 'qwen3.8-flash-next-fp4'."
+        },
+        "harness": {
+          "type": "string",
+          "description": "Which loop generation wrote this, ideally path@git-sha, e.g. 'loops/v1@a3f9c21'. Lets you segment results by the code that produced them after a rewrite."
+        },
+        "host": {
+          "type": "string",
+          "description": "Machine name, e.g. 'devbox' or 'spark-9a7e'."
+        }
+      }
+    },
+    "idem": {
+      "type": ["string", "null"],
+      "description": "Optional idempotency key. append() with an idem already present returns the existing event id without writing. Set it on any event a crashed job might retry, so a retry cannot double-count a measurement or a budget charge."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Kind-specific body. Validated on write for frozen kinds; passed through untouched for free kinds."
+    }
+  },
+  "x-frozen": ["id", "ts", "kind", "schema", "subject"]
+}
