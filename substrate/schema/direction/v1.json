@@ -5,7 +5,7 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "FREE KIND — documented but NOT validated on write. Guidance from the researcher to the lab assistants: what to work on, what to avoid, and what idea to try. This is a loop-internal contract, not a substrate one: the researcher writes it and lab assistants read it, both ship together, so it may change shape whenever the loop does. The substrate carries the bytes and never inspects them. Subject is bench:<name>.",
+  "description": "FREE TYPE — documented but NOT validated on write. Guidance from the researcher to the lab assistants: what to work on, what to avoid, and what idea to try. This is a loop-internal contract, not a substrate one: the researcher writes it and lab assistants read it, both ship together, so it may change shape whenever the loop does. The substrate carries the bytes and never inspects them. Subject is bench:<name>.",
   "type": "object",
   "required": [
     "brief"

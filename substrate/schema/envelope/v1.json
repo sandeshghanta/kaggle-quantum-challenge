@@ -5,15 +5,15 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "Wrapper carried by every event regardless of kind. The envelope is how the substrate navigates the log without understanding any payload. `v` versions the envelope; `kind_v` versions the payload. The two change independently.",
+  "description": "Wrapper carried by every event regardless of type. The envelope is how the substrate navigates the log without understanding any payload. `v` versions the envelope; `type_v` versions the payload. The two change independently.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "v",
     "id",
     "ts",
-    "kind",
-    "kind_v",
+    "type",
+    "type_v",
     "subject",
     "actor",
     "payload"
@@ -34,20 +34,20 @@
       "format": "date-time",
       "description": "RFC3339 UTC, millisecond precision. Redundant with the ULID prefix but kept because humans and SQL both want a real timestamp."
     },
-    "kind": {
+    "type": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
-      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Declared kinds (program.committed, candidate.measured, budget.spent) are validated on write; all others are free."
+      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Declared types (program.committed, candidate.measured, budget.spent) are validated on write; all others are free."
     },
-    "kind_v": {
+    "type_v": {
       "type": "integer",
       "minimum": 1,
-      "description": "Payload version for THIS kind only, independent of `v` and of every other kind. Resolve against schema/<kind>/v<kind_v>.json to interpret the payload. Readers that encounter an unknown version should refuse rather than guess."
+      "description": "Payload version for THIS type only, independent of `v` and of every other type. Resolve against schema/<type>/v<type_v>.json to interpret the payload. Readers that encounter an unknown version should refuse rather than guess."
     },
     "subject": {
       "type": "string",
       "pattern": "^[a-z]+:.+$",
-      "description": "What this event is ABOUT (not who wrote it — that is `actor`), as 'type:rest'. Known types: prog:sha256:<hex>, bench:<name>, pool:<name>, dir:<ulid>, hyp:<ulid>. New types may be added freely; the 'type:rest' shape is the contract. history(subject) retrieves everything about one thing, across all actors: a program typically accumulates a commit from a lab assistant, several measurements from the verifier, and notes from the researcher, all under one subject."
+      "description": "What this event is ABOUT (not who wrote it — that is `actor`), as 'prefix:rest'. Known prefixes: prog:sha256:<hex>, bench:<name>, pool:<name>, dir:<ulid>, hyp:<ulid>. New prefixes may be added freely; the 'prefix:rest' shape is the contract. history(subject) retrieves everything about one thing, across all actors: a program typically accumulates a commit from a lab assistant, several measurements from the verifier, and notes from the researcher, all under one subject."
     },
     "actor": {
       "type": "object",
@@ -71,24 +71,25 @@
         }
       }
     },
-    "idem": {
+    "cause": {
       "type": [
         "string",
         "null"
       ],
-      "description": "Optional idempotency key. append() with an idem already present returns the existing event id without writing. Set it on any event a crashed job might retry, so a retry cannot double-count a measurement or a budget charge."
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "WHY THIS EVENT EXISTS: id of the event that prompted it, or null. A program.committed points at the direction or human instruction that asked for it; a candidate.measured at the program.committed it scored; a decision.made at the direction it answers. Follow it to attribute results to the idea that caused them — this is what answers whether the expensive model is earning its budget. Do not confuse with a program's `parent` (what code it came from)."
     },
     "payload": {
       "type": "object",
-      "description": "Kind-specific body. Validated on write for declared kinds; passed through untouched for free kinds."
+      "description": "Type-specific body. Validated on write for declared types; passed through untouched for free types."
     }
   },
   "x-frozen": [
     "v",
     "id",
     "ts",
-    "kind",
-    "kind_v",
+    "type",
+    "type_v",
     "subject"
   ]
 }

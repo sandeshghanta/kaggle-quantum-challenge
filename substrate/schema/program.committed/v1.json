@@ -10,8 +10,7 @@
   "required": [
     "blob",
     "parent",
-    "benchmark",
-    "cause"
+    "benchmark"
   ],
   "properties": {
     "blob": {
@@ -30,14 +29,6 @@
     "benchmark": {
       "type": "string",
       "description": "Which competition task this program targets, e.g. 'invsqrt', 'dqi', 'dfthcsos'. Denormalized onto both program.committed and candidate.measured — technically redundant, kept because it makes nearly every query simpler."
-    },
-    "cause": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
-      "description": "WHY SOMEONE WROTE IT. Event id of whatever prompted this program — usually a `direction` from the researcher, sometimes a human instruction. Null for a baseline nobody asked for. It is only an event id, so the join survives any change in what a direction looks like. This is the field that answers whether the expensive model is earning its budget."
     },
     "note": {
       "type": "string",

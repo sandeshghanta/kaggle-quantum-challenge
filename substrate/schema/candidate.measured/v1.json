@@ -18,7 +18,7 @@
     "program": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
-      "description": "Digest of the program that produced this candidate. Join key to program.committed, and through its `cause` field, to the direction that prompted it."
+      "description": "Digest of the program that produced this candidate. Join key to program.committed."
     },
     "cost": {
       "type": "number",
