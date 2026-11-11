@@ -9,12 +9,15 @@ events or blobs.
 ## Layout
 
 ```
-substrate/
+substrate/                   code and contract (in git)
+  schema/<type>/vN.json      JSON Schema per type-version. Never deleted.
+  fixtures/<type>/vN.json    one sample payload per type-version.
+  upcasters.py               converts old payload versions to the latest.
+  cli.py                     the only API (Python class + JSON command line).
+
+<data root>/                 $SUBSTRATE_ROOT, default <repo>/var/substrate (not in git)
   events.sqlite              the event log. Append-only. The truth.
   blobs/sha256/ab/cd/<hash>  content-addressed, zstd-compressed: code, circuits, logs, rationale.
-  schema/<type>/vN.json      JSON Schema per type-version. Never deleted.
-  upcasters.py               converts old payload versions to the latest.
-  cli.py                     the only API.
 ```
 
 ## Events

@@ -1,0 +1,19 @@
+[project]
+name = "kaggle-quantum-challenge"
+version = "0.1.0"
+description = "Auto-research loop for the Google Verifiable Quantum Circuit Compilation challenge"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "jsonschema>=4.23",
+    "zstandard>=0.23",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

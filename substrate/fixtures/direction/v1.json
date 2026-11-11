@@ -1,0 +1,12 @@
+{
+  "brief": "Shrink the table to 2^10 and add one Newton step.",
+  "why": "Island 3 improved 9% on 190 attempts.",
+  "prediction": {
+    "metric": "island:3/best_cost",
+    "threshold": 125000,
+    "by_attempts": 300
+  },
+  "islands": [
+    "3"
+  ]
+}

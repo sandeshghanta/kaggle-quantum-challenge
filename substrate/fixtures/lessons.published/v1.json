@@ -1,0 +1,9 @@
+{
+  "working": [
+    "smaller tables"
+  ],
+  "not_working": [
+    "signed-digit tables"
+  ],
+  "open_questions": []
+}

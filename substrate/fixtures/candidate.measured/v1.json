@@ -1,0 +1,20 @@
+{
+  "program": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "circuit": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "cost": 136796.0,
+  "passes": true,
+  "benchmark": "invsqrt",
+  "metrics": {
+    "Q": 82,
+    "T": 1668.2
+  },
+  "shots": 200540928,
+  "seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "verifier": "kickmix@1.0.0",
+  "cost_basis": "invsqrt/QxC/v1"
+}

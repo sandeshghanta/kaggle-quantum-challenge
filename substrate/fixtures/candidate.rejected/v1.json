@@ -1,0 +1,6 @@
+{
+  "program": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "circuit": null,
+  "reason": "quick_check_failed",
+  "detail": "scratch not restored"
+}

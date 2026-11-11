@@ -1,0 +1,7 @@
+{
+  "pool": "qwen",
+  "tokens_in": 22000,
+  "tokens_out": 3000,
+  "tokens_cached": 20000,
+  "wall_seconds": 163.0
+}
