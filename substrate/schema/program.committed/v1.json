@@ -34,6 +34,5 @@
       "type": "string",
       "description": "Optional free text from the author — what was changed and why, one or two sentences. Not validated, not parsed. Useful in digests, since it is far cheaper than diffing source."
     }
-  },
-  "x-subject": "prog:{blob}"
+  }
 }

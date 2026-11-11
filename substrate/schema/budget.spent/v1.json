@@ -5,7 +5,7 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "A resource was consumed. One type covers tokens and CPU alike so budget() is uniform across pools. The substrate REPORTS spend; it does not enforce caps — policy lives in loop config, because caps change far more often than the fact of spending does. Subject is pool:<name>.",
+  "description": "A resource was consumed by one run: a pi run (researcher, lab assistant, admin chat) or a verifier run. Who spent it is in the envelope `actor`; what it was spent on is the envelope `cause` (the job, visit or check it served). The substrate REPORTS spend; caps are loop policy. Subject is pool:<name>.",
   "type": "object",
   "required": [
     "pool",
@@ -15,7 +15,7 @@
   "properties": {
     "pool": {
       "type": "string",
-      "description": "Which resource pool was drawn from. Current pools: 'claude' (metered, ~17.4M tokens/week on the $20 plan), 'qwen' (local DGX Spark, free but throughput-bound), 'cpu' (the devbox, 16 cores). Free string so pools can be added. A job must draw from exactly one pool — that one-to-one mapping is the whole budget mechanism."
+      "description": "Which resource pool was drawn from: 'claude' (the human's Pro plan, shared with their own use; no published quota), 'qwen' (self-hosted on the DGX Spark, free but bounded by decode throughput), 'cpu' (the devbox's 16 cores, used by verification). Free string so pools can be added. Subject is pool:<pool>."
     },
     "tokens_in": {
       "type": "integer",
@@ -38,7 +38,15 @@
         "null"
       ],
       "minimum": 0,
-      "description": "Core-seconds consumed, for the cpu pool. A full invsqrt verification is roughly 334 core-seconds per seed, so this is the field that reveals whether verification or generation is the real bottleneck."
+      "description": "Core-seconds consumed, for cpu-pool work such as verification. Reveals whether verification or generation is the real bottleneck."
+    },
+    "wall_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Elapsed time of the run. With tokens_out it gives per-run throughput, and shows where time goes."
     },
     "usd": {
       "type": [
@@ -47,11 +55,6 @@
       ],
       "minimum": 0,
       "description": "Actual or imputed dollar cost. Null for subscription and local usage. Impute a notional value anyway where you can — it is the only way to compare a free local pool against a metered one."
-    },
-    "job": {
-      "type": "string",
-      "description": "Which job type incurred this, e.g. 'propose', 'vary', 'tune', 'verify', 'decide'. Free string: job types are the most volatile part of the system and must never require a schema change."
     }
-  },
-  "x-subject": "pool:{pool}"
+  }
 }

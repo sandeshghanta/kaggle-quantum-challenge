@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/question.asked/v1.json",
+  "title": "question.asked",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "A question the researcher could not settle alone, shown to the human on the progress view and in the admin chat. Subject is bench:<name>.",
+  "type": "object",
+  "required": [
+    "question"
+  ],
+  "properties": {
+    "question": {
+      "type": "string",
+      "description": "The question."
+    },
+    "context": {
+      "type": "string",
+      "description": "Why it matters and what each answer would change."
+    }
+  }
+}

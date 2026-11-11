@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/human.instructed/v1.json",
+  "title": "human.instructed",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "A steer or idea from the human, recorded once they confirm it should go to the researcher. Its id is the `cause` of the researcher visit it triggers. Subject is bench:<name>.",
+  "type": "object",
+  "required": [
+    "text",
+    "kind"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "The human's words."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "steer",
+        "idea"
+      ],
+      "description": "Change of focus, or something to try."
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/island.updated/v1.json",
+  "title": "island.updated",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "The researcher changed an island. Only the fields present change. `cause` is the direction that decided it. Subject is bench:<name>.",
+  "type": "object",
+  "required": [
+    "island"
+  ],
+  "properties": {
+    "island": {
+      "type": "string",
+      "description": "Island id."
+    },
+    "instructions": {
+      "type": "string",
+      "description": "Replacement instructions."
+    },
+    "weight": {
+      "type": "number",
+      "minimum": 0,
+      "description": "New relative share of jobs."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "retired"
+      ],
+      "description": "Retired islands get no new jobs; their programs stay."
+    }
+  }
+}

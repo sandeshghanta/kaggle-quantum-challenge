@@ -5,55 +5,52 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "FREE TYPE — documented but NOT validated on write. Guidance from the researcher to the lab assistants: what to work on, what to avoid, and what idea to try. This is a loop-internal contract, not a substrate one: the researcher writes it and lab assistants read it, both ship together, so it may change shape whenever the loop does. The substrate carries the bytes and never inspects them. Subject is bench:<name>.",
+  "description": "The record of ONE researcher decision: what it decided, why, and what it expects to happen. Island changes that carry the decision out (island.created / island.updated) are separate events whose `cause` is this direction's id. Several directions can be live at once. Code, not the model, later marks each prediction met / missed / open from events; that is the decision log. Subject is bench:<name>.",
   "type": "object",
   "required": [
-    "brief"
+    "brief",
+    "why",
+    "prediction"
   ],
   "properties": {
-    "focus": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^prog:sha256:[0-9a-f]{64}$"
-      },
-      "description": "Program branches worth mutating now, as prog: refs. Branch-level rather than idea-level steering is deliberate: it gives tighter control over where free Qwen throughput is spent. Empty or absent means assistants pick for themselves from the frontier."
-    },
-    "avoid": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^prog:sha256:[0-9a-f]{64}$"
-      },
-      "description": "Branches established as dead ends. Stop spending here. A branch earns a place on this list by having many descendants and no improvement."
-    },
     "brief": {
       "type": "string",
-      "description": "The actual idea, in prose, addressed to a lab assistant. This is the single most valuable output of an expensive model, so it should be specific and falsifiable: name the change, say why it should help, and give the quantitative condition under which it nets out. Example: 'The 2^12 table is winning. Shrink it to 2^10 and compensate with one extra Newton iteration. Table Toffoli cost scales linearly in entries, so this nets out only if the refinement stays under ~400 Toffolis.'"
+      "description": "The decision in prose, addressed to the lab assistants. Specific and falsifiable: name the change, why it should help, and when it nets out. Example: 'Shrink the table to 2^10 and add one Newton step; this only pays if the refinement stays under ~400 Toffolis.'"
     },
-    "supersedes": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
-      "description": "Event id of the direction this replaces. Latest direction for a subject wins — that is how 'current direction' is derived from an append-only log with no mutation. The chain is kept explicit so you can read the history of what the researcher believed, in order."
+    "why": {
+      "type": "string",
+      "description": "The evidence the decision rests on, citing what was observed (island trends, attempt counts, failures). Lets a later reader judge whether the reasoning held."
     },
-    "hypothesis": {
-      "type": [
-        "string",
-        "null"
+    "prediction": {
+      "type": "object",
+      "required": [
+        "metric",
+        "threshold",
+        "by_attempts"
       ],
-      "pattern": "^hyp:[0-9A-HJKMNP-TV-Z]{26}$",
-      "description": "The hypothesis this direction is testing, if any. Lets several directions accumulate evidence against one claim."
+      "description": "A checkable expectation. Example: {metric: 'island:3/best_cost', threshold: 125000, by_attempts: 300} means island 3's best cost should drop below 125,000 within 300 attempts made after this direction.",
+      "properties": {
+        "metric": {
+          "type": "string",
+          "description": "What is measured, e.g. 'island:<id>/best_cost' or 'bench/best_cost'."
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Value the metric must reach (below, for costs)."
+        },
+        "by_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Attempts after this direction within which it must happen."
+        }
+      }
     },
-    "expires": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "format": "date-time",
-      "description": "Optional. After this time assistants should fall back to the previous direction or to frontier-following, rather than grinding on stale guidance if the researcher has gone quiet because its budget pool is exhausted."
+    "islands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Islands this decision concerns, if any."
     }
   }
 }

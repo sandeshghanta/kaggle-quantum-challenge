@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/island.joined/v1.json",
+  "title": "island.joined",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "A program became a member of an island: as a seed, on submit, or when the researcher migrates or restarts an island from it. A program may join several islands. Subject is prog:<program>.",
+  "type": "object",
+  "required": [
+    "program",
+    "island"
+  ],
+  "properties": {
+    "program": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Program digest."
+    },
+    "island": {
+      "type": "string",
+      "description": "Island id."
+    },
+    "via": {
+      "type": "string",
+      "enum": [
+        "seed",
+        "submit",
+        "migration",
+        "restart"
+      ],
+      "description": "How it joined."
+    }
+  }
+}

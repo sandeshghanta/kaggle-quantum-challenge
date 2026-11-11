@@ -5,7 +5,7 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "A circuit built from a program was scored by the verifier. The only event that carries a result. Failures are recorded too (passes=false) — a failure plus its reason is the most useful signal a lab assistant can get. Subject is derived as prog:{program}: a candidate has no subject of its own, so history('prog:...') returns the commit and every measurement of it. The candidate's identity is `circuit`; re-measuring a circuit appends another event with the same `circuit`.",
+  "description": "A circuit built from a program was scored by the verifier. The only event that carries a result. Failures are recorded too (passes=false) — a failure plus its reason is the most useful signal a lab assistant can get. Subject is prog:<program>: a candidate has no subject of its own, so history('prog:...') returns the commit and every measurement of it. The candidate's identity is `circuit`; re-measuring a circuit appends another event with the same `circuit`. Written only for full verifications; attempts that never reach one are candidate.rejected.",
   "type": "object",
   "required": [
     "program",
@@ -48,10 +48,6 @@
       "description": "How the program was run to build this circuit: arguments, data files, env. A record for analysing parameter sweeps, NOT a reproducibility guarantee — generators may read inputs this does not capture. Keep small; put anything large in a blob and reference its digest.",
       "additionalProperties": true
     },
-    "rung": {
-      "type": "string",
-      "description": "Which verification tier produced this: conventionally 'smoke' (~1e3 shots), 'screen' (~1e5), or 'full' (~2e8 x 4 seeds). Advisory only — the ladder will change. Judge trustworthiness from `shots` and `seeds`, not from this label."
-    },
     "shots": {
       "type": "integer",
       "minimum": 1,
@@ -77,6 +73,5 @@
       "description": "Present when passes=false. Conventionally {class, first_failing_input, detail}. Free-form — the useful failure taxonomy is not knowable in advance.",
       "additionalProperties": true
     }
-  },
-  "x-subject": "prog:{program}"
+  }
 }

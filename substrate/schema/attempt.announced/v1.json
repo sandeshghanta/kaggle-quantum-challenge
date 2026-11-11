@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/attempt.announced/v1.json",
+  "title": "attempt.announced",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "A lab assistant's one-line plan, written when it starts a job, so others in the island can steer away from the same idea. Its id is the `cause` of the resulting program.committed. Subject is prog:<parent program>.",
+  "type": "object",
+  "required": [
+    "island",
+    "plan"
+  ],
+  "properties": {
+    "island": {
+      "type": "string",
+      "description": "Island id."
+    },
+    "plan": {
+      "type": "string",
+      "description": "What it is about to try, one line, e.g. 'merge the two table lookups in the Newton step'."
+    }
+  }
+}

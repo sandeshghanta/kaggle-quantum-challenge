@@ -1,0 +1,109 @@
+<h2>Scoreboard + researcher insights</h2>
+<p class="subtitle">Layout A, with a researcher section added below the health strip. Numbers made up. Click any researcher panel you'd drop, if any.</p>
+
+<style>
+  .kpi{display:inline-block;border:1px solid #8884;border-radius:6px;padding:6px 10px;margin:3px;min-width:110px;font-size:12px;vertical-align:top}
+  .kpi b{display:block;font-size:20px}
+  .kpi small{opacity:.65}
+  .row{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap}
+  .box{border:1px solid #8884;border-radius:6px;padding:8px 10px;font-size:12px;flex:1;min-width:220px}
+  .box h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;opacity:.7;letter-spacing:.05em}
+  .chart{height:110px;border:1px dashed #8886;border-radius:6px;position:relative;font-size:11px}
+  .bar{height:8px;border-radius:4px;background:#5b8def;display:inline-block}
+  .track{display:inline-block;width:120px;height:8px;border-radius:4px;background:#8883;vertical-align:middle}
+  .tag{font-size:10px;padding:1px 6px;border-radius:8px;background:#8883;white-space:nowrap}
+  .good{color:#2e9e5b}.bad{color:#d0533b}.warn{color:#c98a12}
+  table.d{width:100%;border-collapse:collapse;font-size:12px}
+  table.d td,table.d th{border-bottom:1px solid #8883;padding:4px 6px;text-align:left;vertical-align:top}
+  table.d th{font-size:11px;opacity:.7;font-weight:600}
+  .sec{margin-top:14px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.6}
+  .sel{cursor:pointer}
+  .quote{border-left:3px solid #5b8def;padding-left:8px;margin:4px 0}
+</style>
+
+<div class="mockup"><div class="mockup-header">invsqrt — scoreboard</div><div class="mockup-body">
+
+  <div class="sec">Where we stand</div>
+  <div>
+    <span class="kpi">Ratio vs reference<b>17.1×</b><small class="good">▲ 0.8 today</small></span>
+    <span class="kpi">Best cost<b>121,340</b><small>Q 82 · T 1,480</small></span>
+    <span class="kpi">vs public best<b class="good">+12%</b><small>public 15.2×</small></span>
+    <span class="kpi">vs top (claimed)<b class="warn">−15%</b><small>top ~20.6×</small></span>
+  </div>
+
+  <div class="chart" style="margin:8px 0">
+    <div style="position:absolute;left:8px;top:6px">best cost over time (log) · ◆ researcher direction (hover = summary) · ┄ public best</div>
+    <svg viewBox="0 0 300 80" style="position:absolute;left:0;bottom:0;width:100%;height:85px">
+      <line x1="0" y1="40" x2="300" y2="40" stroke="#888" stroke-dasharray="4 3"/>
+      <polyline fill="none" stroke="#5b8def" stroke-width="2" points="0,48 40,48 60,44 110,43 140,34 200,33 230,24 300,22"/>
+      <text x="58" y="38" font-size="9">◆1</text><text x="138" y="28" font-size="9">◆2</text><text x="190" y="28" font-size="9">◆3</text><text x="228" y="18" font-size="9">◆4</text>
+    </svg>
+  </div>
+
+  <div class="row">
+    <div class="box"><h4>Researcher budget</h4>3 calls today · next visit ~14:00<br>5h <span class="track"><span class="bar" style="width:40%"></span></span> 40%<br>7d <span class="track"><span class="bar" style="width:22%"></span></span> 22% · reserve 30% untouched</div>
+    <div class="box"><h4>Lab assistants</h4>12 running · 1,840 attempts today<br>hit rate <b>2.1%</b> (pass &amp; improve) · 14% fail smoke</div>
+    <div class="box"><h4>Verifier</h4>queue 7 · 13/16 cores<br>RAM 9/25 GiB · 31 timeouts today</div>
+  </div>
+
+  <div class="sec">Researcher</div>
+
+  <div class="options" data-multiselect style="display:block">
+
+  <div class="option sel" data-choice="r-current" onclick="toggleSelect(this)" style="display:block">
+    <div class="box" style="border:none;padding:0">
+      <h4>Current direction <span class="tag">◆4 · 09:40</span></h4>
+      <div class="quote">Restart Island 2 from Island 3's best; shift 2 assistants to Island 3. Island 1: keep shaving the Newton step's multiplier.</div>
+      <b>Why:</b> Island 2 has made no gain in 400 attempts; Island 3 improved 9% on 190.
+      <b>Expect:</b> Island 3 below 125k within ~300 attempts, else revisit.
+      <b>Explore / exploit:</b> <span class="track"><span class="bar" style="width:35%"></span></span> 35% explore
+    </div>
+  </div>
+
+  <div class="option sel" data-choice="r-islands" onclick="toggleSelect(this)" style="display:block">
+    <div class="box" style="border:none;padding:0">
+      <h4>Islands — what the researcher has them doing</h4>
+      <table class="d">
+        <tr><th>Island</th><th>Idea</th><th>Assistants</th><th>Best</th><th>Trend</th><th>Researcher's call</th></tr>
+        <tr><td>1</td><td>Newton + 2^12 table</td><td>5</td><td>121,340</td><td class="good">▲ 4%</td><td>exploit</td></tr>
+        <tr><td>2</td><td>piecewise poly (restarted)</td><td>1</td><td>140,002</td><td>—</td><td class="warn">restarted at ◆4</td></tr>
+        <tr><td>3</td><td>2^10 table + extra Newton</td><td>5</td><td>133,900</td><td class="good">▲ 9%</td><td>scale up</td></tr>
+        <tr><td>4</td><td>bit-trick seed</td><td>1</td><td>—</td><td>—</td><td>long shot, keep 1</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="option sel" data-choice="r-scorecard" onclick="toggleSelect(this)" style="display:block">
+    <div class="box" style="border:none;padding:0">
+      <h4>Decision log — did each direction pay off?</h4>
+      <table class="d">
+        <tr><th>#</th><th>When</th><th>Direction</th><th>Prediction</th><th>Outcome</th><th>Opus tokens</th></tr>
+        <tr><td>◆4</td><td>09:40</td><td>Restart Island 2 from Island 3</td><td>Island 3 &lt;125k in 300</td><td><span class="tag">open</span> 40 attempts so far</td><td>31k</td></tr>
+        <tr><td>◆3</td><td>07:55</td><td>Try signed-digit table entries</td><td>−3% T-count</td><td class="bad">✗ no gain in 260 attempts</td><td>28k</td></tr>
+        <tr><td>◆2</td><td>06:02</td><td>2^10 table + one extra Newton step</td><td>nets out if refinement &lt;400 Toffolis</td><td class="good">✓ new best 121,340 (−4%)</td><td>36k</td></tr>
+        <tr><td>◆1</td><td>yesterday</td><td>Seed islands from public notebooks</td><td>baseline 15.2×</td><td class="good">✓ 15.2× reproduced, verified 4 seeds</td><td>22k</td></tr>
+      </table>
+      <div style="margin-top:4px">Hit rate: <b>2 of 3 closed</b> directions paid off · <b>~58k Opus tokens per improvement</b></div>
+    </div>
+  </div>
+
+  <div class="option sel" data-choice="r-beliefs" onclick="toggleSelect(this)" style="display:block">
+    <div class="box" style="border:none;padding:0">
+      <h4>What the researcher currently believes</h4>
+      <span class="good">Working:</span> smaller tables + extra refinement step; reusing ancilla across Newton iterations.<br>
+      <span class="bad">Not working:</span> signed-digit tables (◆3); higher-degree polynomials (cost grows faster than precision).<br>
+      <span class="warn">Open questions:</span> is Q≤80 reachable without a T-count blow-up? Is the public 15.2× circuit close to a local optimum?<br>
+      <small>Published to lab assistants as the "common pitfalls" note.</small>
+    </div>
+  </div>
+
+  <div class="option sel" data-choice="r-asks" onclick="toggleSelect(this)" style="display:block">
+    <div class="box" style="border:none;padding:0">
+      <h4>Questions for you <span class="tag">1 open</span></h4>
+      "The top claimed score (~20.6×) implies Q≈60. Should I spend a direction on a radically low-qubit design even if it stalls the main line for a day?" — reply in the admin chat
+    </div>
+  </div>
+
+  </div>
+
+</div></div>

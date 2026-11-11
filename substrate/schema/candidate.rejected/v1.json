@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/candidate.rejected/v1.json",
+  "title": "candidate.rejected",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "An attempt that did not get a full verification, with the reason. These are the main feedback for later lab assistants and the source of hit-rate statistics. `cause` is the program.committed. Subject is prog:<program>.",
+  "type": "object",
+  "required": [
+    "program",
+    "reason"
+  ],
+  "properties": {
+    "program": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Program digest."
+    },
+    "circuit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Circuit digest, if it was built."
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "build_failed",
+        "quick_check_failed",
+        "duplicate",
+        "not_better"
+      ],
+      "description": "Why it stopped: the generator failed, the cheap check failed, it was a near-copy of a program already in the island, or it passed the cheap check but would not beat its bucket."
+    },
+    "detail": {
+      "type": "string",
+      "description": "Error text or explanation, trimmed. Shown to later lab assistants in their island summary."
+    }
+  }
+}

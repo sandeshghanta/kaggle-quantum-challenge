@@ -62,28 +62,40 @@ filtering by `type` reads a column.
 | `prog` | `prog:sha256:<hex>` | A program; `<hex>` is its blob digest. |
 | `bench` | `bench:<name>` | A competition task: `invsqrt`, `dqi`, `dfthcsos`. |
 | `pool` | `pool:<name>` | A resource pool: `claude`, `qwen`, `cpu`. |
-| `dir` | `dir:<ulid>` | A direction; `<ulid>` is the id of its `direction` event. |
-| `hyp` | `hyp:<ulid>` | A hypothesis; `<ulid>` is the id of its `hypothesis.proposed` event. |
+| `schema` | `schema:<type>` | An event type's schema. |
 
-A direction or hypothesis is created with a `bench:` subject; its event id then
-becomes the `dir:` / `hyp:` subject for everything said about it afterwards. New
-prefixes may be added; the `prefix:rest` shape is fixed.
+New prefixes may be added; the `prefix:rest` shape is fixed.
 
 ### Types
 
-**Declared** types have a validated payload and a subject derived from it. Each
-schema's `x-subject` template says how; `append` fills the subject in, or rejects
-a caller-supplied one that doesn't match.
+**Every type is validated.** Each has a schema in `schema/<type>/v<N>.json`;
+`append` rejects a type with no schema or a payload that doesn't match. Adding a
+type means adding its schema file.
 
-| Type | Means | `x-subject` |
+The writer supplies the subject. `append` checks only its `prefix:rest` shape; each
+schema's description says which subject to use. (Deriving or verifying subjects
+against the payload is deferred.)
+
+| Type | Means | Subject (convention) |
 |---|---|---|
 | `program.committed` | code that builds circuits exists | `prog:{blob}` |
-| `candidate.measured` | a circuit was built and scored | `prog:{program}` |
+| `candidate.measured` | a circuit got a full verification | `prog:{program}` |
+| `candidate.rejected` | an attempt stopped before a full verification | `prog:{program}` |
 | `budget.spent` | a resource was consumed | `pool:{pool}` |
+| `quota.observed` | Claude plan usage as last reported | `pool:claude` |
+| `attempt.announced` | a lab assistant's one-line plan | `prog:` (parent) |
+| `direction` | one researcher decision, with why and a prediction | `bench:` |
+| `island.created` / `island.updated` | island opened / changed | `bench:` |
+| `island.joined` | a program joined an island | `prog:{program}` |
+| `lessons.published` | the researcher's current beliefs | `bench:` |
+| `question.asked` | a question for the human | `bench:` |
+| `human.instructed` | a confirmed steer or idea from the human | `bench:` |
+| `loop.config_changed` | active role versions / settings changed | `bench:` |
+| `schema.registered` | a schema version came into use | `schema:{type}` |
 
-All other types are **free**: payload not validated, subject set by the caller,
-still documented by a schema file. Examples: `direction`, `hypothesis.proposed`,
-`decision.made`, `note`, `human.instructed`, `schema.registered`.
+The substrate's own queries (`frontier`, `lineage`, `budget`) read only
+`program.committed`, `candidate.measured` and `budget.spent`; changing those
+affects every loop. The rest are read by the current loop.
 
 ### Programs and candidates
 
@@ -147,12 +159,10 @@ whole or not at all. Digests are of the raw bytes; zstd is storage only.
 # write
 put_blob(data: bytes) -> str
     # Returns "sha256:…" of the raw bytes. Idempotent: same bytes, same blob.
-append(type: str, payload: dict, *, actor: dict, subject: str | None = None,
+append(type: str, payload: dict, *, subject: str, actor: dict,
        cause: str | None = None, type_v: int = LATEST) -> str
     # The only event writer. Returns the event id.
-    # Declared types: invalid payload or mismatched subject raises SchemaViolation;
-    #   nothing is written. Subject may be omitted and is derived.
-    # Free types: subject is required.
+    # Unknown type or invalid payload raises SchemaViolation; nothing is written.
 
 # projections — read payloads upcast to the latest version
 frontier(benchmark: str, *, k: int = 20, verifier: str | None = None) -> list[Candidate]
@@ -205,8 +215,8 @@ Each one has a test.
 2. **Events are stored as written.** Upcasting happens on read; the stored payload
    never changes.
 3. **Status is derived, never stored.** Change state by appending an event.
-4. **Validation is enforced.** `append` rejects an invalid declared-type payload
-   or subject.
+4. **Validation is enforced.** `append` rejects an unknown type or an invalid
+   payload.
 5. **Jobs are safe to kill.** `append` is one transaction; `put_blob` is atomic and
    idempotent. A retried job may append a duplicate event; at worst it inflates
    measurement counts or budget totals.

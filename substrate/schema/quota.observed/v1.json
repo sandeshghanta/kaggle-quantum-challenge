@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/quota.observed/v1.json",
+  "title": "quota.observed",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "The Claude plan's usage as observed after a Claude run. The plan only reports usage alongside a response, so the latest of these is what the researcher's budget gate and the progress view's budget bars read. Subject is pool:claude.",
+  "type": "object",
+  "required": [
+    "five_hour_pct",
+    "seven_day_pct"
+  ],
+  "properties": {
+    "five_hour_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Used share of the 5-hour window."
+    },
+    "five_hour_resets_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the 5-hour window resets."
+    },
+    "seven_day_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Used share of the weekly limit."
+    },
+    "seven_day_resets_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the weekly limit resets."
+    }
+  }
+}

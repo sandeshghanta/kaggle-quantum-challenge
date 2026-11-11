@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/loop.config_changed/v1.json",
+  "title": "loop.config_changed",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "The orchestrator started using a new configuration: which version of each role is active and with what weights. Lets results be segmented by the behaviour that produced them. Subject is bench:<name>.",
+  "type": "object",
+  "required": [
+    "role_versions"
+  ],
+  "properties": {
+    "role_versions": {
+      "type": "object",
+      "description": "Role → {version: weight}, e.g. {'lab_assistant': {'v2': 0.8, 'v3': 0.2}}.",
+      "additionalProperties": true
+    },
+    "settings": {
+      "type": "object",
+      "description": "Other loop settings that changed (e.g. N, researcher cadence).",
+      "additionalProperties": true
+    }
+  }
+}

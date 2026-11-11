@@ -37,7 +37,7 @@
     "type": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
-      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Declared types (program.committed, candidate.measured, budget.spent) are validated on write; all others are free."
+      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Every type has a schema in schema/<type>/; append rejects a type with no schema and a payload that does not match."
     },
     "type_v": {
       "type": "integer",
@@ -47,7 +47,7 @@
     "subject": {
       "type": "string",
       "pattern": "^[a-z]+:.+$",
-      "description": "What this event is ABOUT (not who wrote it — that is `actor`), as 'prefix:rest'. Known prefixes: prog:sha256:<hex>, bench:<name>, pool:<name>, dir:<ulid>, hyp:<ulid>. New prefixes may be added freely; the 'prefix:rest' shape is the contract. history(subject) retrieves everything about one thing, across all actors: a program typically accumulates a commit from a lab assistant, several measurements from the verifier, and notes from the researcher, all under one subject."
+      "description": "What this event is ABOUT (not who wrote it — that is `actor`), as 'prefix:rest'. Known prefixes: prog:sha256:<hex>, bench:<name>, pool:<name>, schema:<type>. New prefixes may be added; the 'prefix:rest' shape is the contract. Supplied by the writer; each type's schema description says which subject to use. history(subject) retrieves everything about one thing, across all actors."
     },
     "actor": {
       "type": "object",
@@ -81,7 +81,7 @@
     },
     "payload": {
       "type": "object",
-      "description": "Type-specific body. Validated on write for declared types; passed through untouched for free types."
+      "description": "Type-specific body, validated on write against schema/<type>/v<type_v>.json."
     }
   },
   "x-frozen": [

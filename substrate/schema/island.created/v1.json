@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/island.created/v1.json",
+  "title": "island.created",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "The researcher opened a new island: one line of attack with its own instructions. `cause` is the direction that decided it. Subject is bench:<name>.",
+  "type": "object",
+  "required": [
+    "island",
+    "idea",
+    "instructions"
+  ],
+  "properties": {
+    "island": {
+      "type": "string",
+      "description": "Island id, unique within the benchmark."
+    },
+    "idea": {
+      "type": "string",
+      "description": "One-line name of the approach."
+    },
+    "instructions": {
+      "type": "string",
+      "description": "What lab assistants in this island should do and avoid. Becomes part of their brief."
+    },
+    "weight": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Share of lab assistant jobs this island gets, relative to other islands."
+    }
+  }
+}

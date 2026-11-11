@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/schema.registered/v1.json",
+  "title": "schema.registered",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "A schema version came into use (or changed status). Appended when a new schema/<type>/vN.json is added, so the log records when each version was live. Subject is schema:<type>.",
+  "type": "object",
+  "required": [
+    "type",
+    "type_v",
+    "status"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "The event type the schema is for."
+    },
+    "type_v": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The version."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "deprecated",
+        "retired"
+      ],
+      "description": "Status from now on."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Hash of the schema file, so the exact text in force is known."
+    }
+  }
+}
