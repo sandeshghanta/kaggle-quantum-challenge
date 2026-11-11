@@ -5,15 +5,29 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "Wrapper carried by every event regardless of kind. The envelope is how the substrate navigates the log without understanding any payload. Its five frozen fields are the deepest commitment in the system.",
+  "description": "Wrapper carried by every event regardless of kind. The envelope is how the substrate navigates the log without understanding any payload. `v` versions the envelope; `kind_v` versions the payload. The two change independently.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "ts", "kind", "schema", "subject", "actor", "payload"],
+  "required": [
+    "v",
+    "id",
+    "ts",
+    "kind",
+    "kind_v",
+    "subject",
+    "actor",
+    "payload"
+  ],
   "properties": {
+    "v": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Envelope version. The one field whose name and position never change: readers check it first, and refuse a version they do not know rather than guess. Bump only for a breaking envelope change; adding an optional envelope field does not bump."
+    },
     "id": {
       "type": "string",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
-      "description": "ULID. Time-prefixed and lexically sortable, so the log is naturally ordered and a cursor is a plain string comparison. Never reuse; never renumber."
+      "description": "ULID. The event's identity. Never reuse. Not the cursor: concurrent writers can commit ULIDs out of order, so the store's commit sequence is the cursor."
     },
     "ts": {
       "type": "string",
@@ -23,16 +37,16 @@
     "kind": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
-      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Four kinds are frozen (validated on write); all others are free-form."
+      "description": "Event type, e.g. 'candidate.measured'. Everything dispatches on this string. Declared kinds (program.committed, candidate.measured, budget.spent) are validated on write; all others are free."
     },
-    "schema": {
+    "kind_v": {
       "type": "integer",
       "minimum": 1,
-      "description": "Payload schema version for THIS kind only, not a global version. Resolve against schema/<kind>/v<schema>.json to interpret the payload. Readers that encounter an unknown version should refuse rather than guess."
+      "description": "Payload version for THIS kind only, independent of `v` and of every other kind. Resolve against schema/<kind>/v<kind_v>.json to interpret the payload. Readers that encounter an unknown version should refuse rather than guess."
     },
     "subject": {
       "type": "string",
-      "pattern": "^(prog|bench|pool|dir|hyp):.+$",
+      "pattern": "^[a-z]+:.+$",
       "description": "What this event is ABOUT (not who wrote it — that is `actor`), as 'type:rest'. Known types: prog:sha256:<hex>, bench:<name>, pool:<name>, dir:<ulid>, hyp:<ulid>. New types may be added freely; the 'type:rest' shape is the contract. history(subject) retrieves everything about one thing, across all actors: a program typically accumulates a commit from a lab assistant, several measurements from the verifier, and notes from the researcher, all under one subject."
     },
     "actor": {
@@ -58,13 +72,23 @@
       }
     },
     "idem": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Optional idempotency key. append() with an idem already present returns the existing event id without writing. Set it on any event a crashed job might retry, so a retry cannot double-count a measurement or a budget charge."
     },
     "payload": {
       "type": "object",
-      "description": "Kind-specific body. Validated on write for frozen kinds; passed through untouched for free kinds."
+      "description": "Kind-specific body. Validated on write for declared kinds; passed through untouched for free kinds."
     }
   },
-  "x-frozen": ["id", "ts", "kind", "schema", "subject"]
+  "x-frozen": [
+    "v",
+    "id",
+    "ts",
+    "kind",
+    "kind_v",
+    "subject"
+  ]
 }

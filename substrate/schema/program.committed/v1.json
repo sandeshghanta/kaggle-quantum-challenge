@@ -7,15 +7,23 @@
   "since": "2026-11-11",
   "description": "A piece of code that builds a circuit now exists. Programs are the unit of evolution — the thing that is mutated, inherited from, and attributed. A program is not yet a result; it becomes one when a candidate.measured event scores it. Subject is prog:<blob>.",
   "type": "object",
-  "required": ["blob", "parent", "benchmark", "cause"],
+  "required": [
+    "blob",
+    "parent",
+    "benchmark",
+    "cause"
+  ],
   "properties": {
     "blob": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
-      "description": "Digest of the program SOURCE in the blob store (blob kind 'program'). Content-addressed, which means duplicate work deduplicates itself: if two lab assistants independently write identical code, it is one program. This is why the researcher broadcasts a direction rather than assigning tasks — no claiming or locking is needed."
+      "description": "Digest of the program in the blob store. One blob per program: bundle every file that affects the output (imported modules, data files it reads), not just the entry script. Content-addressed, which means duplicate work deduplicates itself: if two lab assistants independently write identical code, it is one program. This is why the researcher broadcasts a direction rather than assigning tasks — no claiming or locking is needed."
     },
     "parent": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^sha256:[0-9a-f]{64}$",
       "description": "WHAT CODE THIS CAME FROM. Digest of the program this was edited from, or null for a root/baseline. Nobody stores the search tree; it is reconstructed by following these links. Use it to find which direction of travel was working, and which branches to stop spending on. Do not confuse with `cause`."
     },
@@ -24,20 +32,17 @@
       "description": "Which competition task this program targets, e.g. 'invsqrt', 'dqi', 'dfthcsos'. Denormalized onto both program.committed and candidate.measured — technically redundant, kept because it makes nearly every query simpler."
     },
     "cause": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
-      "description": "WHY SOMEONE WROTE IT. Event id of whatever prompted this program — usually a `direction` from the researcher, sometimes a human instruction. Null for a baseline nobody asked for. Frozen because it is shape-independent: it is only an event id, so the join survives any churn in what a direction looks like. This is the field that answers whether the expensive model is earning its budget."
+      "description": "WHY SOMEONE WROTE IT. Event id of whatever prompted this program — usually a `direction` from the researcher, sometimes a human instruction. Null for a baseline nobody asked for. It is only an event id, so the join survives any change in what a direction looks like. This is the field that answers whether the expensive model is earning its budget."
     },
     "note": {
       "type": "string",
       "description": "Optional free text from the author — what was changed and why, one or two sentences. Not validated, not parsed. Useful in digests, since it is far cheaper than diffing source."
     }
   },
-  "x-accessors": {
-    "_comment": "Which accessor in substrate/accessors.py reads which field IN THIS VERSION. This is the real dependency graph: to change a field, add a branch to the named accessor and a conformance fixture for this version. Nothing else in the system names these fields.",
-    "program_ref": "blob",
-    "parent_ref": "parent",
-    "cause_ref": "cause",
-    "benchmark": "benchmark"
-  }
+  "x-subject": "prog:{blob}"
 }

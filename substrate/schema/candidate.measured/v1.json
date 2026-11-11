@@ -5,9 +5,15 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "A program was built into a circuit and scored by the verifier. This is the only event that carries a result. Failures are recorded here too (passes=false) rather than discarded — a failure plus its reason is the most useful signal a lab assistant can be given. SUBJECT IS prog:<the program measured>, not a separate candidate id: a candidate is not an independent entity with its own lifecycle, it is one (program, config) run. Keeping the program as subject means history('prog:...') returns the commit AND every measurement of it, which is the query you actually want. Several candidates from one program under different configs therefore share a subject.",
+  "description": "A circuit built from a program was scored by the verifier. The only event that carries a result. Failures are recorded too (passes=false) — a failure plus its reason is the most useful signal a lab assistant can get. Subject is derived as prog:{program}: a candidate has no subject of its own, so history('prog:...') returns the commit and every measurement of it. The candidate's identity is `circuit`; re-measuring a circuit appends another event with the same `circuit`.",
   "type": "object",
-  "required": ["program", "cost", "passes", "benchmark"],
+  "required": [
+    "program",
+    "circuit",
+    "cost",
+    "passes",
+    "benchmark"
+  ],
   "properties": {
     "program": {
       "type": "string",
@@ -17,11 +23,11 @@
     "cost": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "The competition cost. LOWER IS BETTER. Always present, always a single scalar — this is what makes frontier() work identically across benchmarks and across every future loop generation. For invsqrt: Q x (Toffolis + T/4). COMPARABLE ONLY WITHIN THE SAME `verifier` VALUE; a verifier upgrade can shift costs, so never compare across versions without checking."
+      "description": "The competition cost. LOWER IS BETTER. Always a single scalar, so frontier() works the same across benchmarks. Per benchmark: invsqrt Q x (Toffolis + T/4); dqi R x Q^2 x T (R prices the shot failure rate); dfthcsos lambda x T x Q. Comparable only within the same `cost_basis` and `verifier`."
     },
     "passes": {
       "type": "boolean",
-      "description": "True only if the verifier accepted EVERY shot. A single bad shot means false. frontier() considers only passing candidates, but failing ones stay in the log deliberately."
+      "description": "True if the verifier ACCEPTED the circuit. Not 'every shot was correct': some benchmarks (dqi) tolerate a small shot failure rate and charge for it in `cost`, and those circuits pass. Record shot-level error counts in `metrics`. frontier() considers only passing candidates; failing ones stay in the log deliberately."
     },
     "benchmark": {
       "type": "string",
@@ -29,17 +35,17 @@
     },
     "metrics": {
       "type": "object",
-      "description": "Benchmark-specific numbers. Free-form by design, so dqi can add eps_plus and dfthcsos can add lambda_eff with no schema change. For invsqrt use {\"Q\": <qubits>, \"T\": <toffoli_equivalents>}. Baseline for reference: Q=260, T=7735, cost=2011100.",
+      "description": "Benchmark-specific numbers. Free-form, so each benchmark adds what it needs with no schema change. invsqrt: {\"Q\", \"T\"}. dqi: {\"Q\", \"T\", \"R\", \"value_errors\", \"phase_errors\"}. Baseline for reference (invsqrt): Q=260, T=7735, cost=2011100.",
       "additionalProperties": true
     },
     "circuit": {
-      "type": ["string", "null"],
+      "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
-      "description": "Digest of the serialized circuit (.kmb/.kmx), blob kind 'circuit', or null if not retained. SAFE TO GARBAGE COLLECT: (program, config) regenerates it deterministically, so dropping one costs seconds rather than information."
+      "description": "SHA-256 of the raw serialized circuit (.kmb/.kmx) — the same bytes the verifier and leaderboard see. This IS the candidate's identity."
     },
     "config": {
       "type": "object",
-      "description": "The parameters the program was run with. Recorded so the circuit can be regenerated after GC, and so parameter sweeps are analysable. Keep small — event lines must stay under 4 KB for atomic append; spill to a blob if large.",
+      "description": "How the program was run to build this circuit: arguments, data files, env. A record for analysing parameter sweeps, NOT a reproducibility guarantee — generators may read inputs this does not capture. Keep small; put anything large in a blob and reference its digest.",
       "additionalProperties": true
     },
     "rung": {
@@ -49,11 +55,13 @@
     "shots": {
       "type": "integer",
       "minimum": 1,
-      "description": "Total shots simulated. Free, but record it consistently: a free field written by convention can be promoted to frozen later and will then work retroactively over all history."
+      "description": "Total shots simulated. Record it consistently on every measurement."
     },
     "seeds": {
       "type": "array",
-      "items": { "type": "integer" },
+      "items": {
+        "type": "integer"
+      },
       "description": "Verifier seeds used. NEVER TRUST A SINGLE SEED. The leaderboard seeds its tests from the circuit's SHA-256 combined with a secret salt, and any edit to a circuit draws a fresh test set, so a candidate passing on one seed may be lucky rather than correct. Nothing should be submitted on fewer than four independent seeds."
     },
     "verifier": {
@@ -70,11 +78,5 @@
       "additionalProperties": true
     }
   },
-  "x-accessors": {
-    "_comment": "Which accessor in substrate/accessors.py reads which field IN THIS VERSION. This is the real dependency graph: to change a field, add a branch to the named accessor and a conformance fixture for this version. Nothing else in the system names these fields.",
-    "cost": "cost",
-    "passed": "passes",
-    "program_ref": "program",
-    "benchmark": "benchmark"
-  }
+  "x-subject": "prog:{program}"
 }

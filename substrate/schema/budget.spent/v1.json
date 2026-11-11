@@ -7,7 +7,11 @@
   "since": "2026-11-11",
   "description": "A resource was consumed. One kind covers tokens and CPU alike so budget() is uniform across pools. The substrate REPORTS spend; it does not enforce caps — policy lives in loop config, because caps change far more often than the fact of spending does. Subject is pool:<name>.",
   "type": "object",
-  "required": ["pool", "tokens_in", "tokens_out"],
+  "required": [
+    "pool",
+    "tokens_in",
+    "tokens_out"
+  ],
   "properties": {
     "pool": {
       "type": "string",
@@ -29,12 +33,18 @@
       "description": "Portion of tokens_in served from a prompt cache. Worth tracking: the standing brief is a stable prefix, so with consults inside the cache TTL the fixed context costs roughly a tenth of list price. Big enough to change allocation decisions."
     },
     "cpu_seconds": {
-      "type": ["number", "null"],
+      "type": [
+        "number",
+        "null"
+      ],
       "minimum": 0,
       "description": "Core-seconds consumed, for the cpu pool. A full invsqrt verification is roughly 334 core-seconds per seed, so this is the field that reveals whether verification or generation is the real bottleneck."
     },
     "usd": {
-      "type": ["number", "null"],
+      "type": [
+        "number",
+        "null"
+      ],
       "minimum": 0,
       "description": "Actual or imputed dollar cost. Null for subscription and local usage. Impute a notional value anyway where you can — it is the only way to compare a free local pool against a metered one."
     },
@@ -43,8 +53,5 @@
       "description": "Which job type incurred this, e.g. 'propose', 'vary', 'tune', 'verify', 'decide'. Free string: job types are the most volatile part of the system and must never require a schema change."
     }
   },
-  "x-accessors": {
-    "_comment": "Which accessor in substrate/accessors.py reads which field IN THIS VERSION. The `resource` accessor returns a normalized Resource for budget(), so adding a new pool dimension (e.g. gpu_seconds) means extending that one accessor, not every caller.",
-    "resource": ["pool", "tokens_in", "tokens_out", "tokens_cached", "cpu_seconds", "usd"]
-  }
+  "x-subject": "pool:{pool}"
 }
