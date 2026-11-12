@@ -30,7 +30,7 @@ Also replace the quick check, which covers about 2% of the domain, with a full-d
    - The socket is `/run/substrate/api.sock`, mode 0660, group `substrate-clients`. Every loop role user is in that group.
    - One writer process, which also removes SQLite `Busy` contention between 9+ processes.
 2. **Attestation.**
-   - Each role runs as its own user: `rl-worker`, `rl-verifier`, `rl-seed`, and later `rl-researcher`, `rl-orchestrator`, `rl-admin`.
+   - Each role runs as its own user: `rl-worker`, `rl-verifier`, `rl-seed`, and later `rl-researcher` (the researcher service, which also writes `quota.observed`, Claude `budget.spent` and `loop.config_changed`) and `rl-admin`.
    - The server maps peer uid → user name → role via the policy file, and overwrites `actor.role`. The client still supplies `model` and `harness`.
 3. **Policy** (`loop/policy.json`). Everyone may read. Each role may append only:
 
@@ -41,7 +41,7 @@ Also replace the quick check, which covers about 2% of the domain, with a full-d
    | `seed` | `island.created`; `program.committed`; `island.joined` with `via ∈ {seed}`; `put_blob` |
    | `substrate` | `schema.registered` (only the server itself, via `init`) |
 
-   The researcher, orchestrator and admin rows are added with their plans.
+   The researcher and admin rows are added with their plans.
 4. **Sandboxing.**
    - **pi** runs under `bwrap`:
      - read-only `/nix/store` and the repo
