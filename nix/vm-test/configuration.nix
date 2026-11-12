@@ -19,7 +19,7 @@
   # The system under test
   services.research-loop = {
     enable = true;
-    repo.url = "/srv/research-loop.git";
+    repo.url = "https://github.com/sandeshghanta/kaggle-quantum-challenge.git";
     repo.ref = "sandesh/_claude/first-loop";
     workers = 2;
     model.baseUrl = "http://127.0.0.1:8099/v1";
