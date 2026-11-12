@@ -3,7 +3,7 @@ from collections import Counter
 
 import pytest
 
-from loop import pool
+from loop import config, pool
 from substrate.cli import Substrate
 
 ACTOR = {"role": "test"}
@@ -17,7 +17,7 @@ def sub(tmp_path):
     return s
 
 
-def member(sub, ch, cost=None, island="main"):
+def member(sub, ch, cost=None, island="main", quick=None):
     prog = "sha256:" + ch * 64
     sub.append("program.committed", {"blob": prog, "parent": None, "benchmark": "invsqrt"},
                subject="prog:" + prog, actor=ACTOR)
@@ -26,7 +26,8 @@ def member(sub, ch, cost=None, island="main"):
     if cost is not None:
         sub.append("candidate.measured", {"program": prog, "circuit": "sha256:" + ch.upper().lower() * 63 + "0",
                                           "cost": cost, "passes": True, "benchmark": "invsqrt",
-                                          "verifier": "v", "cost_basis": "invsqrt/QxC/v1"},
+                                          "verifier": config.verifier_tag(), "cost_basis": "invsqrt/QxC/v1",
+                                          "metrics": {"quick_cost": quick} if quick else {}},
                    subject="prog:" + prog, actor=ACTOR)
     return prog
 
@@ -76,7 +77,21 @@ def test_empty_island_raises(sub):
 
 
 def test_pick_island_weighted_and_active_only(sub):
+    member(sub, "a")
     sub.append("island.created", {"island": "dead", "idea": "i", "instructions": "x", "weight": 100.0},
                subject="bench:invsqrt", actor=ACTOR)
     sub.append("island.updated", {"island": "dead", "status": "retired"}, subject="bench:invsqrt", actor=ACTOR)
+    assert {pool.pick_island(sub, random.Random(i)) for i in range(20)} == {"main"}
+
+
+def test_island_best_quick_is_quick_cost_of_best_member(sub):
+    member(sub, "a", 300.0, quick=290.0)
+    member(sub, "b", 100.0, quick=99.0)
+    assert pool.island_best_quick(sub, "main") == 99.0
+
+
+def test_pick_island_skips_empty_islands(sub):
+    member(sub, "a")
+    sub.append("island.created", {"island": "empty", "idea": "i", "instructions": "x", "weight": 100.0},
+               subject="bench:invsqrt", actor=ACTOR)
     assert {pool.pick_island(sub, random.Random(i)) for i in range(20)} == {"main"}

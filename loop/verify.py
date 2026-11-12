@@ -83,14 +83,22 @@ def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
     )
 
 
-def evaluate(sub: Substrate, program: str, *, island_best: float | None, salts: list[int],
+def evaluate(sub: Substrate, program: str, *, island_best_quick: float | None, salts: list[int],
              max_workers: int | None, workdir: Path, cause: str, full_max_x: int | None = None) -> Outcome:
     actor = config.actor("verifier", VERSION)
     subject = "prog:" + program
     cpu0 = resource.getrusage(resource.RUSAGE_CHILDREN)
     t0 = time.monotonic()
 
+    def spend() -> None:  # written before the result, so a kill in between cannot lose the CPU spend
+        cpu1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+        cpu = (cpu1.ru_utime + cpu1.ru_stime) - (cpu0.ru_utime + cpu0.ru_stime)
+        sub.append("budget.spent", {"pool": "cpu", "tokens_in": 0, "tokens_out": 0, "cpu_seconds": round(cpu, 2),
+                                    "wall_seconds": round(time.monotonic() - t0, 2)},
+                   subject="pool:cpu", actor=actor, cause=cause)
+
     def reject(reason: str, detail: str, circuit: str | None = None, cost: float | None = None) -> Outcome:
+        spend()
         eid = sub.append("candidate.rejected", {"program": program, "circuit": circuit,
                                                 "reason": reason, "detail": detail[-4000:]},
                          subject=subject, actor=actor, cause=cause)
@@ -103,26 +111,34 @@ def evaluate(sub: Substrate, program: str, *, island_best: float | None, salts: 
         outcome = reject("build_failed", built.stderr or "generator exited without writing a circuit")
     else:
         circuit = sub.put_blob(built.kmb.read_bytes())
+        already = _measured_circuit(sub, circuit)
+        if already is not None:
+            return reject("duplicate", f"circuit identical to one already measured (program {already})", circuit)
         quick = quick_check(built.kmb, max_workers=max_workers)
         if not quick.passes:
             outcome = reject("quick_check_failed", quick.error or "", circuit)
-        elif island_best is not None and quick.cost >= island_best:
-            outcome = reject("not_better", f"quick cost {quick.cost:.6g} >= island best {island_best:.6g}",
+        elif island_best_quick is not None and quick.cost >= island_best_quick:
+            outcome = reject("not_better",
+                             f"quick cost {quick.cost:.6g} >= island best quick cost {island_best_quick:.6g}",
                              circuit, quick.cost)
         else:
             full = full_check(built.kmb, salts=salts, max_workers=max_workers, max_x=full_max_x)
             cost = full.cost if full.cost is not None else quick.cost
             payload = {"program": program, "circuit": circuit, "cost": cost, "passes": full.passes,
-                       "benchmark": config.BENCHMARK, "metrics": full.metrics, "shots": full.shots,
+                       "benchmark": config.BENCHMARK, "metrics": full.metrics | {"quick_cost": quick.cost},
+                       "shots": full.shots,
                        "seeds": full.seeds, "verifier": config.verifier_tag(), "cost_basis": config.COST_BASIS}
             if not full.passes:
                 payload["failure"] = {"detail": (full.error or "")[-2000:]}
+            spend()
             eid = sub.append("candidate.measured", payload, subject=subject, actor=actor, cause=cause)
             outcome = Outcome("measured", eid, cost)
-
-    cpu1 = resource.getrusage(resource.RUSAGE_CHILDREN)
-    cpu = (cpu1.ru_utime + cpu1.ru_stime) - (cpu0.ru_utime + cpu0.ru_stime)
-    sub.append("budget.spent", {"pool": "cpu", "tokens_in": 0, "tokens_out": 0,
-                                "cpu_seconds": round(cpu, 2), "wall_seconds": round(time.monotonic() - t0, 2)},
-               subject="pool:cpu", actor=actor, cause=outcome.event_id)
     return outcome
+
+
+def _measured_circuit(sub: Substrate, circuit: str) -> str | None:
+    """Program of an existing measurement of this exact circuit, if any."""
+    for ev in sub.since(None, types=["candidate.measured"], limit=-1)[0]:
+        if ev.payload.get("circuit") == circuit:
+            return ev.payload["program"]
+    return None

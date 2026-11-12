@@ -35,9 +35,13 @@ def children(sub: Substrate, program: str) -> int:
     return len(sub.history("prog:" + program, types=["attempt.announced"]))
 
 
+def _frontier(sub: Substrate):
+    return sub.frontier(config.BENCHMARK, verifier=config.verifier_tag(), cost_basis=config.COST_BASIS, k=10_000)
+
+
 def _best_costs(sub: Substrate) -> dict[str, float]:
     best: dict[str, float] = {}
-    for c in sub.frontier(config.BENCHMARK, cost_basis=config.COST_BASIS, k=10_000):
+    for c in _frontier(sub):
         if c.program not in best or c.cost < best[c.program]:
             best[c.program] = c.cost
     return best
@@ -49,13 +53,21 @@ def island_best(sub: Substrate, island: str) -> float | None:
     return min(costs) if costs else None
 
 
+def island_best_quick(sub: Substrate, island: str) -> float | None:
+    """Quick-check cost of the island's best measured candidate (comparable with a new quick check)."""
+    progs = set(members(sub, island))
+    ranked = [c for c in _frontier(sub) if c.program in progs]
+    return ranked[0].metrics.get("quick_cost") if ranked else None
+
+
 def island_of(sub: Substrate, program: str) -> str | None:
     joined = sub.history("prog:" + program, types=["island.joined"])
     return joined[0].payload["island"] if joined else None
 
 
 def pick_island(sub: Substrate, rng: random.Random) -> str:
-    active = {k: v for k, v in islands(sub).items() if v["status"] == "active" and v["weight"] > 0}
+    active = {k: v for k, v in islands(sub).items()
+              if v["status"] == "active" and v["weight"] > 0 and members(sub, k)}
     if not active:
         raise LookupError("no active islands")
     names = sorted(active)

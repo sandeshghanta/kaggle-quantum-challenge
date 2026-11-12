@@ -16,10 +16,10 @@ from substrate.types import Event
 JUDGED = ["candidate.measured", "candidate.rejected"]
 
 
-def island_best(sub: Substrate, program: str) -> float | None:
-    """Best passing cost in the program's island, or None if unknown."""
+def island_best_quick(sub: Substrate, program: str) -> float | None:
+    """Quick-check cost of the best candidate in the program's island, or None if unknown."""
     island = pool.island_of(sub, program)
-    return pool.island_best(sub, island) if island else None
+    return pool.island_best_quick(sub, island) if island else None
 
 
 def pending(sub: Substrate, cursor: int) -> tuple[list[Event], int]:
@@ -37,7 +37,7 @@ def run_once(sub: Substrate, *, state_path: Path, workdir: Path, salts: list[int
         if stop():
             return done
         program = ev.payload["blob"]
-        evaluate(sub, program, island_best=island_best(sub, program), salts=salts,
+        evaluate(sub, program, island_best_quick=island_best_quick(sub, program), salts=salts,
                  max_workers=max_workers, workdir=workdir, cause=ev.id, full_max_x=full_max_x)
         save_cursor(state_path, ev.seq)
         done += 1

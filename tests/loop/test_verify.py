@@ -31,7 +31,7 @@ def commit_bundle(sub, tmp_path, gen: str) -> tuple[str, str]:
 
 def run(sub, tmp_path, gen, **kw):
     program, cause = commit_bundle(sub, tmp_path, gen)
-    args = {"island_best": None, "salts": [1], "max_workers": None, "full_max_x": 4096} | kw
+    args = {"island_best_quick": None, "salts": [1], "max_workers": None, "full_max_x": 4096} | kw
     return program, verify.evaluate(sub, program, workdir=tmp_path / "work", cause=cause, **args)
 
 
@@ -54,7 +54,7 @@ def test_build_failure_is_rejected_with_traceback(tmp_path, sub):  # Review Focu
     assert out.kind == "rejected" and rej.payload["reason"] == "build_failed"
     assert "Traceback" in rej.payload["detail"] and rej.cause is not None
     [spent] = sub.history("pool:cpu", types=["budget.spent"])
-    assert spent.cause == out.event_id
+    assert spent.cause == rej.cause and spent.seq < rej.seq
 
 
 def test_build_timeout_is_rejected(tmp_path, sub, monkeypatch):
@@ -71,7 +71,7 @@ def test_wrong_circuit_fails_quick_check(tmp_path, sub):
 
 
 def test_not_better_than_island_best(tmp_path, sub):
-    program, out = run(sub, tmp_path, REFERENCE, island_best=1.0)
+    program, out = run(sub, tmp_path, REFERENCE, island_best_quick=1.0)
     [rej] = events(sub, program, "candidate.rejected")
     assert rej.payload["reason"] == "not_better" and out.cost > 1.0
 
@@ -83,3 +83,17 @@ def test_improvement_gets_full_check_and_measurement(tmp_path, sub):
     assert out.kind == "measured" and p["passes"] and p["seeds"] == [1, 2]
     assert p["verifier"] == config.verifier_tag() and p["cost_basis"] == "invsqrt/QxC/v1"
     assert p["metrics"]["Q"] == 260 and p["shots"] == 2 * 4096 * 64
+
+
+def test_measurement_records_quick_cost(tmp_path, sub):
+    program, out = run(sub, tmp_path, REFERENCE)
+    [m] = events(sub, program, "candidate.measured")
+    assert m.payload["metrics"]["quick_cost"] > 0 and m.payload["metrics"]["quick_cost"] != m.payload["cost"]
+
+
+def test_identical_circuit_is_rejected_as_duplicate(tmp_path, sub):
+    run(sub, tmp_path, REFERENCE)
+    program, out = run(sub, tmp_path, REFERENCE + "\n# only a comment changed\n")
+    [rej] = events(sub, program, "candidate.rejected")
+    assert out.kind == "rejected" and rej.payload["reason"] == "duplicate"
+    assert events(sub, program, "candidate.measured") == []

@@ -75,10 +75,11 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
         if after == before:
             return "unchanged"
         program = sub.put_blob(after)
+        # island.joined first: a crash between the two leaves an unjudged-but-placed program, never an orphan
+        sub.append("island.joined", {"program": program, "island": island, "via": "submit"},
+                   subject="prog:" + program, actor=actor, cause=ann)
         sub.append("program.committed", {"blob": program, "parent": parent, "benchmark": config.BENCHMARK,
                                          "note": _note(run.final_text)},
-                   subject="prog:" + program, actor=actor, cause=ann)
-        sub.append("island.joined", {"program": program, "island": island, "via": "submit"},
                    subject="prog:" + program, actor=actor, cause=ann)
         return "committed"
     finally:
