@@ -8,6 +8,7 @@ dependencies = [
     "zstandard>=0.23",
     "kickmix==1.0.0",
     "numpy",
+    "scipy>=1.18.1",
 ]
 
 [dependency-groups]

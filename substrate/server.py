@@ -108,6 +108,16 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
             role = policy.role_for_user(user) if user else None
             return role is not None, role
 
+        def _discard_small_body(self) -> None:
+            """Read and drop a small body (<= 64 KB) so the client can read our error instead of a broken
+            pipe; larger or invalid bodies are left unread and the connection is closed."""
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return
+            if 0 < length <= 65536:
+                self.rfile.read(length)
+
         def _body(self) -> bytes | None:
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -141,8 +151,9 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
                 self._error(e)
 
         def do_POST(self):
-            ok, role = self._principal()  # before reading anything: unknown callers get nothing
+            ok, role = self._principal()  # before buffering anything: unknown callers get nothing
             if not ok:
+                self._discard_small_body()
                 self.close_connection = True
                 return self._json(403, {"error": "Forbidden", "message": "unknown caller"})
             body = self._body()
