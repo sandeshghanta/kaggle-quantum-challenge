@@ -94,9 +94,38 @@ Set `services.research-loop.researcher.enable = false` to run without it.
 Data lives in `/var/lib/research-loop/substrate` (event log + blobs). Back it up with
 `substrate.cli export`.
 
+## 5. Open the progress page
+
+The page is served on the devbox itself, only to the tailnet. From any device on the tailnet
+(laptop or phone with Tailscale on) open:
+
+    http://devbox:8080
+
+The module runs two small units under `research-loop.target`: `research-loop-live` (user `rl-live`)
+rewrites `live.json` every 15 s from the substrate and the worker heartbeats, and
+`research-loop-statuspage` (user `rl-status`) serves the page. The page also reads
+`researcher.json`, written only by the researcher service; until the first researcher visit it shows
+"No researcher visit yet". The two files have separate writers and never touch each other's output.
+
+The port binds on all interfaces, but the firewall trusts only `tailscale0` and does not open it, so
+nothing outside the tailnet can reach it. Options:
+
+```nix
+services.research-loop.statusPage = {
+  enable = true;            # default
+  port = 8080;              # default
+  tailscaleServe = false;   # true: also https://devbox.<tailnet>.ts.net via `tailscale serve`
+};
+```
+
+Files live in `/var/lib/research-loop/status/{live,workers,researcher}`. Check with
+`systemctl status research-loop-live research-loop-statuspage` and
+`curl -s localhost:8080/live.json | jq .score` on the devbox. `rl-live` is a read-only role in
+`loop/policy.json`, so after updating the loop code restart `substrated` (`research-loop-update` does).
+
 ## Security model
 
-- Each role runs as its own Unix user: `substrate`, `rl-deploy`, `rl-worker`, `rl-verifier`, `rl-seed`.
+- Each role runs as its own Unix user: `substrate`, `rl-deploy`, `rl-worker`, `rl-verifier`, `rl-seed`, `rl-live` (read-only), `rl-status` (files only).
 - Only `substrated` (user `substrate`) can open the event log and blobs in
   `/var/lib/research-loop/substrate` (mode 0700). Everyone else talks to it over
   `/run/substrate/api.sock`; the server identifies each caller by its Unix user and enforces

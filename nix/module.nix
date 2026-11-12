@@ -38,6 +38,7 @@ let
     ReadWritePaths = writable;
     PrivateTmp = true;
   } // extra;
+  status = "${cfg.dataDir}/status";
   rhome = "${cfg.dataDir}/researcher";   # the researcher's persistent home: Claude login, npm prefix, pi agent dir
   statusDir = "${cfg.dataDir}/status/researcher";   # researcher.json; read by the status page (group status-readers)
   claudeBin = "${rhome}/npm/node_modules/.bin";
@@ -54,6 +55,7 @@ let
         "GIT_SSH_COMMAND='ssh -i ${cfg.repo.sshKeyFile}'"} \
       bash -c 'cd ${repo} && git pull --ff-only && uv sync --frozen'
     systemctl restart research-loop-verifier.service
+    ${lib.optionalString cfg.statusPage.enable "systemctl restart research-loop-live.service research-loop-statuspage.service"}
     for i in $(seq 1 ${toString cfg.workers}); do
       systemctl restart "research-loop-worker@$i.service"   # each drains its current job first
     done
@@ -76,6 +78,12 @@ in {
     model.contextWindow = lib.mkOption { type = lib.types.int; default = 32768; };
     verifier.maxWorkers = lib.mkOption { type = lib.types.int; default = 12; };
     verifier.salts = lib.mkOption { type = lib.types.listOf lib.types.int; default = [ 1 2 3 4 ]; };
+    statusPage.enable = lib.mkOption { type = lib.types.bool; default = true;
+      description = "Run the live updater and the local status page server."; };
+    statusPage.port = lib.mkOption { type = lib.types.port; default = 8080;
+      description = "Port of the status page. The firewall does not open it: only tailscale0 (trusted) can reach it."; };
+    statusPage.tailscaleServe = lib.mkOption { type = lib.types.bool; default = false;
+      description = "Also expose the page as HTTPS on the tailnet with `tailscale serve`."; };
     researcher.enable = lib.mkOption { type = lib.types.bool; default = true;
       description = "Run the researcher service (needs a one-time Claude login: see docs/deploy.md)."; };
     researcher.intervalMin = lib.mkOption { type = lib.types.int; default = 45; };
@@ -85,10 +93,16 @@ in {
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [ {
-    users.groups = lib.genAttrs [ "substrate" "substrate-clients" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ] (_: { });
+    users.groups = lib.genAttrs [ "substrate" "substrate-clients" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed"
+                                  "rl-live" "rl-status" "status-readers" ] (_: { });
+    # live updater: read-only substrate client (role "live" in policy.json); status page: reads files only
     users.users = lib.genAttrs [ "substrate" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ]
       (u: { isSystemUser = true; group = u; }
-          // lib.optionalAttrs (lib.hasPrefix "rl-" u && u != "rl-deploy") { extraGroups = [ "substrate-clients" ]; });
+          // lib.optionalAttrs (lib.hasPrefix "rl-" u && u != "rl-deploy") { extraGroups = [ "substrate-clients" ]; })
+      // {
+        rl-live = { isSystemUser = true; group = "rl-live"; extraGroups = [ "substrate-clients" "status-readers" ]; };
+        rl-status = { isSystemUser = true; group = "rl-status"; extraGroups = [ "status-readers" ]; };
+      };
     programs.nix-ld.enable = true;
     environment.systemPackages = [ update ];
 
@@ -101,11 +115,16 @@ in {
       "d ${cfg.dataDir}/work/verifier 0700 rl-verifier rl-verifier -"
       "d ${cfg.dataDir}/work/workers 0700 rl-worker rl-worker -"
       "d ${cfg.dataDir}/state 0700 rl-verifier rl-verifier -"
+      "d ${status} 0755 root root -"
+      "d ${status}/live 0750 rl-live status-readers -"
+      "d ${status}/workers 0750 rl-worker rl-live -"        # workers write heartbeats, the live updater reads
     ];
 
     systemd.targets.research-loop = {
       wantedBy = [ "multi-user.target" ];
       wants = [ "substrated.service" "research-loop-verifier.service" ]
+        ++ lib.optionals cfg.statusPage.enable [ "research-loop-live.service" "research-loop-statuspage.service" ]
+        ++ lib.optional (cfg.statusPage.enable && cfg.statusPage.tailscaleServe) "research-loop-tailscale-serve.service"
         ++ map (i: "research-loop-worker@${toString i}.service") (lib.range 1 cfg.workers);
     };
 
@@ -182,6 +201,49 @@ in {
       '';
     };
 
+    # Live updater: plain code, writes live.json every 15 s. Read-only on the substrate (role "live").
+    systemd.services.research-loop-live = lib.mkIf cfg.statusPage.enable {
+      description = "Research loop live status updater";
+      after = [ "research-loop-seed.service" ];
+      requires = [ "research-loop-seed.service" ];
+      partOf = [ "research-loop.target" ];
+      environment = runEnv;
+      serviceConfig = roleUnit { user = "rl-live"; writable = [ "${status}/live" ]; extra = {
+        SupplementaryGroups = [ "substrate-clients" "status-readers" ];
+        ReadOnlyPaths = [ "${status}/workers" ];
+        UMask = "0022";
+        TimeoutStopSec = 30;                     # SIGTERM drains: it finishes the current tick and exits
+        ExecStart = "${python} -m loop.live --substrate ${target} --heartbeats ${status}/workers "
+                    + "--out ${status}/live/live.json --interval-s 15"; }; };
+    };
+
+    # Status page: serves the dashboard and two JSON files, GET only. Bound on all interfaces, but the
+    # firewall only trusts tailscale0, so only the tailnet can reach it.
+    systemd.services.research-loop-statuspage = lib.mkIf cfg.statusPage.enable {
+      description = "Research loop status page";
+      after = [ "research-loop-checkout.service" ];
+      requires = [ "research-loop-checkout.service" ];
+      partOf = [ "research-loop.target" ];
+      environment = runEnv;
+      serviceConfig = roleUnit { user = "rl-status"; writable = [ ]; extra = {
+        SupplementaryGroups = [ "status-readers" ];
+        ReadOnlyPaths = [ "${status}/live" "${status}/researcher" ];
+        NoNewPrivileges = true;
+        ExecStart = "${python} -m loop.statuspage --host 0.0.0.0 --port ${toString cfg.statusPage.port} "
+                    + "--live ${status}/live/live.json --researcher ${status}/researcher/researcher.json"; }; };
+    };
+
+    systemd.services.research-loop-tailscale-serve = lib.mkIf (cfg.statusPage.enable && cfg.statusPage.tailscaleServe) {
+      description = "Expose the research loop status page over HTTPS with tailscale serve";
+      after = [ "research-loop-statuspage.service" "tailscaled.service" ];
+      wants = [ "tailscaled.service" ];
+      partOf = [ "research-loop.target" ];
+      path = [ config.services.tailscale.package ];
+      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; Restart = "on-failure"; RestartSec = 30;
+                        ExecStop = "${config.services.tailscale.package}/bin/tailscale serve --https=443 off"; };
+      script = "tailscale serve --bg --https=443 http://127.0.0.1:${toString cfg.statusPage.port}";
+    };
+
     systemd.services."research-loop-worker@" = {
       description = "Research loop lab assistant %i";
       after = [ "research-loop-seed.service" ];
@@ -192,7 +254,7 @@ in {
       # stop timeout outlasts the pi job timeout (900 s) so a stopping worker always records its result
       serviceConfig = roleUnit {
         user = "rl-worker";
-        writable = [ "${cfg.dataDir}/work/workers" ];
+        writable = [ "${cfg.dataDir}/work/workers" "${status}/workers" ];
         extra = { MemoryMax = "2G"; CPUQuota = "50%"; TimeoutStopSec = 1000; }
           // lib.optionalAttrs (cfg.model.apiKeyFile != null) { LoadCredential = [ "apikey:${cfg.model.apiKeyFile}" ]; };
       };
@@ -204,7 +266,8 @@ in {
         fi
         exec ${python} -m loop.worker --substrate ${target} --id "$1" --base-url ${lib.escapeShellArg cfg.model.baseUrl} \
           --model ${lib.escapeShellArg cfg.model.name} --api-key-env RESEARCH_LOOP_API_KEY \
-          --context-window ${toString cfg.model.contextWindow} --workroot ${cfg.dataDir}/work/workers/worker-"$1"
+          --context-window ${toString cfg.model.contextWindow} --workroot ${cfg.dataDir}/work/workers/worker-"$1" \
+          --status-dir ${status}/workers
       '';
       scriptArgs = "%i";
     };

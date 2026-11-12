@@ -7,8 +7,8 @@ P = policy.load(policy.DEFAULT_PATH)
 
 
 def test_users_map_to_roles():
-    assert P.role_for_user("rl-worker") == "worker" and P.role_for_user("nobody") is None
-    assert P.role_for_user("rl-researcher") == "researcher"
+    assert P.role_for_user("rl-worker") == "worker" and P.role_for_user("rl-live") == "live" and P.role_for_user("nobody") is None
+    assert P.role_for_user("rl-researcher") == "researcher" and P.role_for_user("sandeshg") == "viewer"
 
 
 @pytest.mark.parametrize("principal,type,payload,ok", [
@@ -22,6 +22,8 @@ def test_users_map_to_roles():
     ("verifier", "program.committed", {}, False),
     ("seed", "island.joined", {"via": "seed"}, True),
     ("substrate", "schema.registered", {}, True),
+    ("live", "budget.spent", {"pool": "cpu"}, False),
+    ("live", "blob", {}, False),
     ("researcher", "researcher.visited", {}, True),
     ("researcher", "direction", {}, True),
     ("researcher", "island.created", {}, True),

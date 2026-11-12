@@ -97,7 +97,10 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
                 except ValueError:
                     continue
                 if on_event is not None:
-                    on_event(ev)
+                    try:
+                        on_event(ev)
+                    except Exception:  # status reporting must never break a job
+                        pass
                 if ev.get("usage"):
                     usage = ev["usage"]
                 if ev.get("type") == "message_end" and ev.get("message", {}).get("role") == "assistant":

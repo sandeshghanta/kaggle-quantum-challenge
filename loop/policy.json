@@ -4,8 +4,10 @@
     "rl-worker": "worker",
     "rl-verifier": "verifier",
     "rl-seed": "seed",
+    "rl-live": "live",
     "substrate": "substrate",
-    "rl-researcher": "researcher"
+    "rl-researcher": "researcher",
+    "sandeshg": "viewer"
   },
   "roles": {
     "worker": {
@@ -49,6 +51,10 @@
         }
       }
     },
+    "live": {
+      "blob": false,
+      "append": {}
+    },
     "substrate": {
       "blob": false,
       "append": {
@@ -78,6 +84,10 @@
           ]
         }
       }
+    },
+    "viewer": {
+      "blob": false,
+      "append": {}
     }
   }
 }
