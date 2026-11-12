@@ -12,7 +12,7 @@ def run(root, *args):
 
 def test_init_registers_every_schema_once(tmp_path):
     s = Substrate(tmp_path)
-    assert s.init().registered == 15 and s.init().registered == 0
+    assert s.init().registered == 16 and s.init().registered == 0
     assert len(s.history("schema:direction")) == 1
 
 

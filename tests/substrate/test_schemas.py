@@ -10,7 +10,7 @@ FIX = Path("substrate/fixtures")
 
 def test_every_type_has_a_fixture_and_vice_versa():
     assert sorted(p.name for p in FIX.iterdir()) == s.event_types()
-    assert len(s.event_types()) == 15 and "envelope" not in s.event_types()
+    assert len(s.event_types()) == 16 and "envelope" not in s.event_types()
 
 
 @pytest.mark.parametrize("t", s.event_types())
@@ -44,3 +44,17 @@ def test_envelope_rejects_unknown_top_level_field():
            "actor": {}, "payload": {"question": "q"}, "extra": 1}
     with pytest.raises(s.SchemaViolation):
         s.validate_envelope(env)
+
+
+def test_measured_requires_verifier_and_cost_basis():
+    p = json.loads((FIX / "candidate.measured" / "v1.json").read_text())
+    for k in ("verifier", "cost_basis"):
+        with pytest.raises(s.SchemaViolation):
+            s.validate_payload("candidate.measured", 1, {x: v for x, v in p.items() if x != k})
+
+
+def test_prediction_metric_is_an_enum_and_numeric():
+    p = json.loads((FIX / "direction" / "v1.json").read_text())
+    for bad in ({"metric": "island:3/best_cost"}, {"threshold": "low"}, {"by_attempts": 0}):
+        with pytest.raises(s.SchemaViolation):
+            s.validate_payload("direction", 1, p | {"prediction": p["prediction"] | bad})

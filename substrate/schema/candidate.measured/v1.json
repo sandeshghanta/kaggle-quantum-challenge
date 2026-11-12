@@ -5,14 +5,16 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "A circuit built from a program was scored by the verifier. The only event that carries a result. Failures are recorded too (passes=false) — a failure plus its reason is the most useful signal a lab assistant can get. Subject is prog:<program>: a candidate has no subject of its own, so history('prog:...') returns the commit and every measurement of it. The candidate's identity is `circuit`; re-measuring a circuit appends another event with the same `circuit`. Written only for full verifications; attempts that never reach one are candidate.rejected.",
+  "description": "A circuit built from a program was scored by the verifier. The only event that carries a result. Failures are recorded too (passes=false) \u2014 a failure plus its reason is the most useful signal a lab assistant can get. Subject is prog:<program>: a candidate has no subject of its own, so history('prog:...') returns the commit and every measurement of it. The candidate's identity is `circuit`; re-measuring a circuit appends another event with the same `circuit`. Written only for full verifications; attempts that never reach one are candidate.rejected.",
   "type": "object",
   "required": [
     "program",
     "circuit",
     "cost",
     "passes",
-    "benchmark"
+    "benchmark",
+    "verifier",
+    "cost_basis"
   ],
   "properties": {
     "program": {
@@ -41,11 +43,11 @@
     "circuit": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
-      "description": "SHA-256 of the raw serialized circuit (.kmb/.kmx) — the same bytes the verifier and leaderboard see. This IS the candidate's identity."
+      "description": "SHA-256 of the raw serialized circuit (.kmb/.kmx) \u2014 the same bytes the verifier and leaderboard see. This IS the candidate's identity."
     },
     "config": {
       "type": "object",
-      "description": "How the program was run to build this circuit: arguments, data files, env. A record for analysing parameter sweeps, NOT a reproducibility guarantee — generators may read inputs this does not capture. Keep small; put anything large in a blob and reference its digest.",
+      "description": "How the program was run to build this circuit: arguments, data files, env. A record for analysing parameter sweeps, NOT a reproducibility guarantee \u2014 generators may read inputs this does not capture. Keep small; put anything large in a blob and reference its digest.",
       "additionalProperties": true
     },
     "shots": {
@@ -66,11 +68,11 @@
     },
     "cost_basis": {
       "type": "string",
-      "description": "SEMANTIC TAG: what `cost` actually means, independent of what the field is called. e.g. 'invsqrt/QxC/v1' for Q x (Toffolis + T/4). This is the defence against the worst schema failure — a field keeping its name while its meaning drifts. Two values are comparable only if their cost_basis matches; a consumer that sees two different bases knows it must not compare them, rather than silently producing a confident wrong answer."
+      "description": "SEMANTIC TAG: what `cost` actually means, independent of what the field is called. e.g. 'invsqrt/QxC/v1' for Q x (Toffolis + T/4). This is the defence against the worst schema failure \u2014 a field keeping its name while its meaning drifts. Two values are comparable only if their cost_basis matches; a consumer that sees two different bases knows it must not compare them, rather than silently producing a confident wrong answer."
     },
     "failure": {
       "type": "object",
-      "description": "Present when passes=false. Conventionally {class, first_failing_input, detail}. Free-form — the useful failure taxonomy is not knowable in advance.",
+      "description": "Present when passes=false. Conventionally {class, first_failing_input, detail}. Free-form \u2014 the useful failure taxonomy is not knowable in advance.",
       "additionalProperties": true
     }
   }
