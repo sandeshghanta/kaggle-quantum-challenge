@@ -72,3 +72,8 @@ def test_interrupted_job_leaves_only_orphan_announcement(sub, cfg, tmp_path, mon
     assert len(only(sub, "attempt.announced")) == 1 and len(only(sub, "program.committed")) == 1
     monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
     assert worker.run_job(sub, rng=random.Random(1), cfg=cfg, workroot=tmp_path / "w") == "committed"
+
+
+def test_backoff_grows_and_caps():  # review I5
+    assert worker.backoff_seconds(0) == 0
+    assert worker.backoff_seconds(1) < worker.backoff_seconds(3) <= worker.backoff_seconds(20) == 300

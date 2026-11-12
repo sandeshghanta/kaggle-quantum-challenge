@@ -46,11 +46,11 @@ def test_cursor_saved_after_each_program(tmp_path, sub, monkeypatch):
     def flaky(s, program, **kw):
         calls.append(program)
         if len(calls) == 2:
-            raise RuntimeError("crash")
+            raise KeyboardInterrupt  # a kill; ordinary exceptions are now recorded as verify_error
         return real(s, program, **kw)
 
     monkeypatch.setattr(verifier, "evaluate", flaky)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(KeyboardInterrupt):
         run_once(sub, tmp_path)
     first_seq = sub.history("prog:" + a, types=["program.committed"])[0].seq
     assert state.load_cursor(tmp_path / "cursor") == first_seq
@@ -69,3 +69,20 @@ def test_cursor_file_roundtrip(tmp_path):
     assert state.load_cursor(tmp_path / "c") == 0
     state.save_cursor(tmp_path / "c", 42)
     assert state.load_cursor(tmp_path / "c") == 42
+
+
+def test_unexpected_error_is_recorded_and_skipped(tmp_path, sub, monkeypatch):  # review I3
+    a = commit(sub, tmp_path, BROKEN.format(n=1))
+    b = commit(sub, tmp_path, BROKEN.format(n=2))
+    real = verify.evaluate
+
+    def explode_on_a(s, program, **kw):
+        if program == a:
+            raise MemoryError("simulated")
+        return real(s, program, **kw)
+
+    monkeypatch.setattr(verifier, "evaluate", explode_on_a)
+    assert run_once(sub, tmp_path) == 2
+    reasons = {e.payload["program"]: e.payload["reason"] for e in rejected(sub)}
+    assert reasons == {a: "verify_error", b: "build_failed"}
+    assert run_once(sub, tmp_path) == 0

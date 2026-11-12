@@ -39,3 +39,13 @@ def test_pi_timeout(tmp_path, monkeypatch):
         work, agent, sysfile = setup(tmp_path, fake.base_url)
         r = run_pi(work, agent, prompt="hi", system_append=sysfile, tools=[], model="fake-model", timeout_s=2)
     assert not r.ok and r.error == "timeout"
+
+
+def test_usage_is_summed_over_turns(tmp_path, monkeypatch):  # review I6
+    monkeypatch.setenv("FAKE_KEY", "k")
+    script = [{"tool_calls": [{"name": "read", "arguments": {"path": "gen.py"}}]}, {"text": "SUMMARY: looked"}]
+    with FakeOpenAI(script) as fake:
+        work, agent, sysfile = setup(tmp_path, fake.base_url)
+        r = run_pi(work, agent, prompt="Look.", system_append=sysfile, tools=["read"], model="fake-model",
+                   timeout_s=60)
+    assert r.ok and r.tokens_out == 2 * 20 and r.tokens_in == 2 * 100

@@ -7,7 +7,7 @@ import signal
 import time
 from pathlib import Path
 
-from loop import pool
+from loop import config, pool
 from loop.state import load_cursor, save_cursor
 from loop.verify import evaluate
 from substrate.cli import Substrate
@@ -37,8 +37,13 @@ def run_once(sub: Substrate, *, state_path: Path, workdir: Path, salts: list[int
         if stop():
             return done
         program = ev.payload["blob"]
-        evaluate(sub, program, island_best_quick=island_best_quick(sub, program), salts=salts,
-                 max_workers=max_workers, workdir=workdir, cause=ev.id, full_max_x=full_max_x)
+        try:
+            evaluate(sub, program, island_best_quick=island_best_quick(sub, program), salts=salts,
+                     max_workers=max_workers, workdir=workdir, cause=ev.id, full_max_x=full_max_x)
+        except Exception as e:  # never loop on one program: record it and move on
+            sub.append("candidate.rejected", {"program": program, "reason": "verify_error",
+                                              "detail": f"{type(e).__name__}: {e}"[-4000:]},
+                       subject="prog:" + program, actor=config.actor("verifier", "v1"), cause=ev.id)
         save_cursor(state_path, ev.seq)
         done += 1
     if not stop():

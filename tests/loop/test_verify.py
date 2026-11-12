@@ -97,3 +97,20 @@ def test_identical_circuit_is_rejected_as_duplicate(tmp_path, sub):
     [rej] = events(sub, program, "candidate.rejected")
     assert out.kind == "rejected" and rej.payload["reason"] == "duplicate"
     assert events(sub, program, "candidate.measured") == []
+
+
+def test_full_check_failing_every_salt_is_recorded(tmp_path, sub, monkeypatch):  # review C2
+    failing = verify.CheckResult(passes=False, cost=None, metrics={"seconds": 1.0}, shots=0, seeds=[1, 2],
+                                 error="phase out of tolerance at x=3000001")
+    monkeypatch.setattr(verify, "full_check", lambda *a, **k: failing)
+    program, out = run(sub, tmp_path, REFERENCE, salts=[1, 2])
+    [m] = events(sub, program, "candidate.measured")
+    assert out.kind == "measured" and m.payload["passes"] is False and "shots" not in m.payload
+    assert "x=3000001" in m.payload["failure"]["detail"]
+
+
+def test_check_timeout_is_a_failure_not_a_hang(tmp_path, sub, monkeypatch):  # review I3
+    monkeypatch.setattr(verify, "QUICK_TIMEOUT", 0.01)
+    program, out = run(sub, tmp_path, REFERENCE)
+    [rej] = events(sub, program, "candidate.rejected")
+    assert rej.payload["reason"] == "quick_check_failed" and "timed out" in rej.payload["detail"]

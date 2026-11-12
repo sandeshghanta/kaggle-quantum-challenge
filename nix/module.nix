@@ -25,7 +25,6 @@ let
     WorkingDirectory = repo;
     KillSignal = "SIGTERM";
     KillMode = "mixed";       # SIGTERM only the main process so it can finish its job; children are left running
-    TimeoutStopSec = 900;
     Restart = "on-failure";
     RestartSec = 10;
     ProtectSystem = "strict";
@@ -47,13 +46,14 @@ in {
     enable = lib.mkEnableOption "the quantum circuit research loop";
     repo.url = lib.mkOption { type = lib.types.str; description = "Git URL of this repository."; };
     repo.ref = lib.mkOption { type = lib.types.str; default = "main"; };
-    repo.sshKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null;
+    repo.sshKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null;
       description = "Deploy key for a private repository (readable by research-loop)."; };
     dataDir = lib.mkOption { type = lib.types.path; default = "/var/lib/research-loop"; };
     workers = lib.mkOption { type = lib.types.ints.positive; default = 8; };
     model.baseUrl = lib.mkOption { type = lib.types.str; };
     model.name = lib.mkOption { type = lib.types.str; };
-    model.apiKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.path; default = null; };
+    # str, not path: a Nix path literal would copy the secret into the world-readable store
+    model.apiKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
     model.contextWindow = lib.mkOption { type = lib.types.int; default = 32768; };
     verifier.maxWorkers = lib.mkOption { type = lib.types.int; default = 12; };
     verifier.salts = lib.mkOption { type = lib.types.listOf lib.types.int; default = [ 1 2 3 4 ]; };
@@ -99,7 +99,10 @@ in {
       after = [ "research-loop-seed.service" ];
       requires = [ "research-loop-seed.service" ];
       partOf = [ "research-loop.target" ];
-      serviceConfig = longRunning { MemoryMax = "8G"; };
+      # exactly one verifier: nothing claims a program before verifying it, so a second one would double-score.
+      # TimeoutStopSec covers a full-check salt in progress; OOMPolicy=continue records an OOM-killed check
+      # as a failure instead of stopping the service.
+      serviceConfig = longRunning { MemoryMax = "8G"; TimeoutStopSec = 4 * 3600; OOMPolicy = "continue"; };
       script = ''
         exec uv run python -m loop.verifier --root ${root} --state ${cfg.dataDir}/state/verifier.cursor \
           --workdir ${cfg.dataDir}/work/verifier --max-workers ${toString cfg.verifier.maxWorkers} \
@@ -112,7 +115,8 @@ in {
       after = [ "research-loop-seed.service" ];
       requires = [ "research-loop-seed.service" ];
       partOf = [ "research-loop.target" ];
-      serviceConfig = longRunning ({ MemoryMax = "2G"; CPUQuota = "50%"; }
+      # stop timeout outlasts the pi job timeout (900 s) so a stopping worker always records its result
+      serviceConfig = longRunning ({ MemoryMax = "2G"; CPUQuota = "50%"; TimeoutStopSec = 1000; }
         // lib.optionalAttrs (cfg.model.apiKeyFile != null) { LoadCredential = [ "apikey:${cfg.model.apiKeyFile}" ]; });
       script = ''
         if [ -n "''${CREDENTIALS_DIRECTORY:-}" ] && [ -f "$CREDENTIALS_DIRECTORY/apikey" ]; then

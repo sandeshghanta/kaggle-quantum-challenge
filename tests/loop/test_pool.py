@@ -95,3 +95,19 @@ def test_pick_island_skips_empty_islands(sub):
     sub.append("island.created", {"island": "empty", "idea": "i", "instructions": "x", "weight": 100.0},
                subject="bench:invsqrt", actor=ACTOR)
     assert {pool.pick_island(sub, random.Random(i)) for i in range(20)} == {"main"}
+
+
+def test_outlier_cost_does_not_overflow(sub):  # review C1
+    for ch, cost in zip("abcde", [2011100.0, 1900000.0, 1899000.0, 1898500.0, 1898400.0]):
+        member(sub, ch, cost)
+    rng = random.Random(0)
+    assert all(pool.pick_parent(sub, "main", rng) for _ in range(50))
+
+
+def test_rejected_programs_are_not_picked(sub):  # review I4
+    good = member(sub, "a", 100.0)
+    for ch in "bcdef9":
+        bad = member(sub, ch)
+        sub.append("candidate.rejected", {"program": bad, "reason": "duplicate"}, subject="prog:" + bad, actor=ACTOR)
+    rng = random.Random(0)
+    assert {pool.pick_parent(sub, "main", rng) for _ in range(200)} == {good}

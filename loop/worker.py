@@ -46,6 +46,13 @@ def _note(final_text: str) -> str:
     return final_text.strip()[:200] or "(no summary)"
 
 
+def backoff_seconds(consecutive_failures: int) -> float:
+    """Pause after repeated fast failures (endpoint down, bad key) so workers don't loop hot."""
+    if consecutive_failures <= 0:
+        return 0
+    return min(300.0, 5.0 * 2 ** (consecutive_failures - 1))
+
+
 def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: Path) -> str:
     role = json.loads((cfg.role_dir / "role.json").read_text())
     island = pool.pick_island(sub, rng)
@@ -111,13 +118,22 @@ def main(argv: list[str] | None = None) -> int:
                        Path(args.role_dir), args.id)
     sub = Substrate(args.root)
     rng = random.Random()
+    failures = 0
     while not stopping:
         try:
             outcome = run_job(sub, rng=rng, cfg=cfg, workroot=Path(args.workroot))
             print(f"worker {args.id}: {outcome}", flush=True)
+            failures = failures + 1 if outcome == "failed" else 0
         except LookupError as e:  # no island/program yet
             print(f"worker {args.id}: waiting ({e})", flush=True)
+            failures = 0
             time.sleep(10)
+        delay = backoff_seconds(failures)
+        if delay:
+            print(f"worker {args.id}: {failures} failures in a row; backing off {delay:.0f}s", flush=True)
+            end = time.monotonic() + delay
+            while not stopping and time.monotonic() < end:
+                time.sleep(0.5)
     print(f"worker {args.id}: finished current job, exiting", flush=True)
     return 0
 

@@ -57,6 +57,7 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
     proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True)
     final, usage, buf, err = "", {}, b"", b""
+    totals = {"input": 0, "output": 0, "cacheRead": 0}  # summed over assistant messages (usage is per LLM call)
     sel = selectors.DefaultSelector()
     sel.register(proc.stdout, selectors.EVENT_READ)
     sel.register(proc.stderr, selectors.EVENT_READ)
@@ -85,15 +86,18 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
                     usage = ev["usage"]
                 if ev.get("type") == "message_end" and ev.get("message", {}).get("role") == "assistant":
                     final = _text(ev["message"])
-                    usage = ev["message"].get("usage") or usage
+                    msg_usage = ev["message"].get("usage") or usage
+                    for k in totals:
+                        totals[k] += int(msg_usage.get(k, 0) or 0)
+                    usage = {}
     if timed_out:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
     else:
         proc.wait()
     seconds = time.monotonic() - start
-    tokens = dict(tokens_in=int(usage.get("input", 0)) + int(usage.get("cacheRead", 0)),
-                  tokens_out=int(usage.get("output", 0)), tokens_cached=int(usage.get("cacheRead", 0)))
+    tokens = dict(tokens_in=totals["input"] + totals["cacheRead"], tokens_out=totals["output"],
+                  tokens_cached=totals["cacheRead"])
     if timed_out:
         return PiRun(False, None, final, seconds=seconds, error="timeout", **tokens)
     ok = proc.returncode == 0

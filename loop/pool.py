@@ -79,9 +79,11 @@ def pick_parent(sub: Substrate, island: str, rng: random.Random, *, lam: float =
     if not progs:
         raise LookupError(f"island {island!r} has no programs")
     best = _best_costs(sub)
+    rejected = {ev.payload["program"] for ev in sub.since(None, types=["candidate.rejected"], limit=-1)[0]}
     scored = [p for p in progs if p in best]
     if not scored:
-        return rng.choice(progs)
+        live = [p for p in progs if p not in rejected] or progs
+        return rng.choice(live)
     costs = [best[p] for p in scored]
     median = statistics.median(costs)
     mad = 1.4826 * statistics.median(abs(c - median) for c in costs)
@@ -89,8 +91,12 @@ def pick_parent(sub: Substrate, island: str, rng: random.Random, *, lam: float =
     for p in progs:
         if p in best:
             z = (median - best[p]) / mad if mad > 0 else 0.0
-            w = 1.0 / (1.0 + math.exp(-lam * z))
+            w = 1.0 / (1.0 + math.exp(-max(-50.0, min(50.0, lam * z))))  # clamped: no overflow on outliers
+        elif p in rejected:
+            w = 0.0  # judged and not kept; never a parent
         else:
-            w = 0.05
+            w = 0.05  # still waiting for the verifier
         weights.append(w / (1 + children(sub, p)))
+    if not any(weights):
+        return rng.choice(progs)
     return rng.choices(progs, weights=weights)[0]

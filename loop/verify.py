@@ -16,6 +16,8 @@ from loop.programs import build, unpack
 from substrate.cli import Substrate
 
 BUILD_TIMEOUT = 120
+QUICK_TIMEOUT = 1800          # a sane circuit takes seconds; a gate-count blow-up must not hang the verifier
+FULL_TIMEOUT_PER_SALT = 4 * 3600
 QUICK_MAX_X = 65536
 VERSION = "v1"
 
@@ -38,10 +40,14 @@ class Outcome:
     cost: float | None
 
 
-def _run_verifier(kmb: Path, extra: list[str]) -> CheckResult:
+def _run_verifier(kmb: Path, extra: list[str], timeout: float) -> CheckResult:
     start = time.monotonic()
-    proc = subprocess.run([sys.executable, "-I", "invsqrt/verify_submission_invsqrt.py", str(kmb), *extra],
-                          cwd=config.VERIFIER_DIR, capture_output=True, text=True)
+    try:
+        proc = subprocess.run([sys.executable, "-I", "invsqrt/verify_submission_invsqrt.py", str(kmb), *extra],
+                              cwd=config.VERIFIER_DIR, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return CheckResult(passes=False, cost=None, metrics={"seconds": round(time.monotonic() - start, 2)},
+                           shots=0, seeds=[], error=f"verifier timed out after {timeout}s")
     elapsed = time.monotonic() - start
     try:
         raw = json.loads(proc.stdout[proc.stdout.index("{"):])
@@ -62,13 +68,13 @@ def _workers(max_workers: int | None) -> list[str]:
 
 
 def quick_check(kmb: Path, *, max_workers: int | None = None) -> CheckResult:
-    return _run_verifier(kmb, ["--max-x", str(QUICK_MAX_X), *_workers(max_workers)])
+    return _run_verifier(kmb, ["--max-x", str(QUICK_MAX_X), *_workers(max_workers)], QUICK_TIMEOUT)
 
 
 def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
                max_x: int | None = None) -> CheckResult:
     extra = _workers(max_workers) + (["--max-x", str(max_x)] if max_x else [])
-    results = [_run_verifier(kmb, ["--salt", str(s), *extra]) for s in salts]
+    results = [_run_verifier(kmb, ["--salt", str(s), *extra], FULL_TIMEOUT_PER_SALT) for s in salts]
     passing = [r for r in results if r.passes]
     worst = max(passing, key=lambda r: r.cost) if passing else None
     failed = next((r for r in results if not r.passes), None)
@@ -130,6 +136,8 @@ def evaluate(sub: Substrate, program: str, *, island_best_quick: float | None, s
                        "seeds": full.seeds, "verifier": config.verifier_tag(), "cost_basis": config.COST_BASIS}
             if not full.passes:
                 payload["failure"] = {"detail": (full.error or "")[-2000:]}
+            if not payload["shots"]:
+                del payload["shots"]  # the verifier reports no shot count on failure; the field is optional
             spend()
             eid = sub.append("candidate.measured", payload, subject=subject, actor=actor, cause=cause)
             outcome = Outcome("measured", eid, cost)
