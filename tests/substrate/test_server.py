@@ -83,3 +83,30 @@ def test_schema_violation_is_400(server):
 def test_socket_is_group_only(server):
     sock, _ = server
     assert oct(os.stat(sock).st_mode & 0o777) == "0o660"
+
+
+def _raw(sock, request: bytes) -> bytes:
+    import socket
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(5)
+    s.connect(str(sock))
+    s.sendall(request)
+    data = s.recv(65536)
+    s.close()
+    return data
+
+
+@pytest.mark.parametrize("length", ["-1", "abc"])
+def test_bad_content_length_is_rejected_and_server_survives(server, length):  # security review I1
+    sock, _ = server
+    resp = _raw(sock, f"POST /v1/put_blob HTTP/1.1\r\nHost: x\r\nContent-Length: {length}\r\n\r\nxxxx".encode())
+    assert resp.startswith(b"HTTP/1.1 400")
+    status, body = call(sock, "POST", "/v1/put_blob", b"small", raw=True)
+    assert status == 200
+
+
+def test_unknown_caller_is_refused_before_body_is_read(server):
+    sock, who = server
+    who["user"] = "mallory"
+    resp = _raw(sock, b"POST /v1/put_blob HTTP/1.1\r\nHost: x\r\nContent-Length: 999999999\r\n\r\n")
+    assert resp.startswith(b"HTTP/1.1 403")

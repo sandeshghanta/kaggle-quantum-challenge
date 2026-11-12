@@ -109,7 +109,14 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
             return role is not None, role
 
         def _body(self) -> bytes | None:
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0:  # a negative length would make read() unbounded
+                self.close_connection = True
+                self._json(400, {"error": "ValueError", "message": "invalid Content-Length"})
+                return None
             if length > max_body:
                 remaining = length  # drain without buffering, so the client can read our answer
                 while remaining > 0:
@@ -134,12 +141,13 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
                 self._error(e)
 
         def do_POST(self):
+            ok, role = self._principal()  # before reading anything: unknown callers get nothing
+            if not ok:
+                self.close_connection = True
+                return self._json(403, {"error": "Forbidden", "message": "unknown caller"})
             body = self._body()
             if body is None:
                 return
-            ok, role = self._principal()
-            if not ok:
-                return self._json(403, {"error": "Forbidden", "message": "unknown caller"})
             method = self.path.removeprefix("/v1/")
             try:
                 if method == "put_blob":

@@ -18,9 +18,17 @@ STDERR_LIMIT = 4000
 
 
 def _files(bundle_dir: Path) -> list[Path]:
+    """Regular files only. Symlinks (to files or directories) are never followed: a bundle written by
+    sandboxed code must not be able to pull in files from outside the sandbox."""
     skip = {"__pycache__", ".pytest_cache"}
-    return sorted(p for p in bundle_dir.rglob("*")
-                  if p.is_file() and not (skip & set(p.relative_to(bundle_dir).parts)))
+    out = []
+    for dirpath, dirnames, filenames in os.walk(bundle_dir, followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in skip and not os.path.islink(os.path.join(dirpath, d))]
+        for name in filenames:
+            path = Path(dirpath) / name
+            if not path.is_symlink() and path.is_file():
+                out.append(path)
+    return sorted(out)
 
 
 def pack(bundle_dir: Path) -> bytes:
@@ -79,5 +87,8 @@ def build(bundle_dir: Path, out_kmb: Path, *, timeout: float = 120) -> BuildResu
         _, stderr = proc.communicate()
         stderr = (stderr or "") + f"\nbuild timed out after {timeout}s"
         return BuildResult(False, None, stderr[-STDERR_LIMIT:], time.monotonic() - start)
+    if out_kmb.is_symlink():  # never read through a link the sandboxed generator planted
+        return BuildResult(False, None, ((stderr or "") + "\noutput circuit is a symlink")[-STDERR_LIMIT:],
+                           time.monotonic() - start)
     ok = proc.returncode == 0 and out_kmb.exists()
     return BuildResult(ok, out_kmb if ok else None, (stderr or "")[-STDERR_LIMIT:], time.monotonic() - start)

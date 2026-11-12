@@ -70,3 +70,21 @@ def test_build_nonzero_exit_fails(tmp_path):
 def test_build_without_output_fails(tmp_path):
     r = build(bundle(tmp_path, "pass\n"), tmp_path / "c.kmb")
     assert not r.ok and r.kmb is None
+
+
+def test_pack_ignores_symlinks(tmp_path):  # security review I2
+    secret = tmp_path / "secret.txt"
+    secret.write_text("api-key")
+    d = bundle(tmp_path, WRITE)
+    (d / "leak").symlink_to(secret)
+    out = tmp_path / "out"
+    unpack(pack(d), out)
+    assert not (out / "leak").exists()
+
+
+def test_build_rejects_symlinked_output(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("api-key")
+    d = bundle(tmp_path, f"import os, sys\nos.symlink({str(secret)!r}, sys.argv[1])\n")
+    r = build(d, d / "c.kmb")
+    assert not r.ok and r.kmb is None and "symlink" in r.stderr
