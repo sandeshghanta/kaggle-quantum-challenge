@@ -1,0 +1,1 @@
+{"version": "v1", "tools": ["read", "edit", "grep", "find", "ls"], "max_output_tokens": 4096, "thinking_budget": 1024, "timeout_s": 900}
