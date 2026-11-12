@@ -6,6 +6,8 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "jsonschema>=4.23",
     "zstandard>=0.23",
+    "kickmix==1.0.0",
+    "numpy",
 ]
 
 [dependency-groups]
@@ -17,3 +19,4 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["pi: needs the pi CLI"]
