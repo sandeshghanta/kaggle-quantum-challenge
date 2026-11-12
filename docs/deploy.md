@@ -72,16 +72,18 @@ On first activation: `research-loop-checkout` clones the repo and runs `uv sync`
 | Update loop code | `sudo research-loop-update` (pull + `uv sync`, then restarts the verifier and each worker; each finishes its current job first) |
 | Pause / resume | `sudo systemctl stop research-loop.target` / `start` |
 | Fewer workers now | `sudo systemctl stop research-loop-worker@8` (persist by changing `workers`) |
-| Query results | `sudo -u research-loop bash -c 'cd /var/lib/research-loop/repo && uv run python -m substrate.cli --root /var/lib/research-loop/substrate frontier invsqrt'` |
+| Query results | `sudo -u rl-verifier env PYTHONPATH=/var/lib/research-loop/repo /var/lib/research-loop/repo/.venv/bin/python -c "from substrate.client import RemoteSubstrate as R; print(R('/run/substrate/api.sock').frontier('invsqrt'))"` |
 
 Data lives in `/var/lib/research-loop/substrate` (event log + blobs). Back it up with
 `substrate.cli export`.
 
-## Known gaps before leaving it unattended
+## Security model
 
-- Lab assistants (pi) and model-written `gen.py` builds run as the `research-loop` user, which
-  can write the event log directly. Sandboxing both, and moving the substrate behind its own
-  service, is the next piece of work.
-- The quick check covers only x ≤ 65,536 (about 2% of the domain), so circuits that are wrong
-  only at large x pass it and fail at the full check. A full-domain one-shot sweep (~28 CPU-s)
-  is the proposed replacement.
+- Each role runs as its own Unix user: `substrate`, `rl-deploy`, `rl-worker`, `rl-verifier`, `rl-seed`.
+- Only `substrated` (user `substrate`) can open the event log and blobs in
+  `/var/lib/research-loop/substrate` (mode 0700). Everyone else talks to it over
+  `/run/substrate/api.sock`; the server identifies each caller by its Unix user and enforces
+  `loop/policy.json` (a worker cannot record measurements, the verifier cannot submit programs).
+- pi jobs and generator builds run inside bubblewrap sandboxes that can write only their own job
+  directory and cannot see the substrate socket. Builds have no network.
+- The loop code checkout is owned by `rl-deploy` and read-only for every other role.
