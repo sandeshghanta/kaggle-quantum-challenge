@@ -10,6 +10,7 @@ from pathlib import Path
 from loop import config, pool
 from loop.state import load_cursor, save_cursor
 from loop.verify import evaluate
+from substrate import connect
 from substrate.cli import Substrate
 from substrate.types import Event
 
@@ -53,7 +54,8 @@ def run_once(sub: Substrate, *, state_path: Path, workdir: Path, salts: list[int
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root", required=True)
+    p.add_argument("--substrate", "--root", dest="substrate", required=True,
+                   help="data directory (in-process) or unix:/run/substrate/api.sock")
     p.add_argument("--state", required=True)
     p.add_argument("--workdir", required=True)
     p.add_argument("--salts", type=int, nargs="+", default=[1, 2, 3, 4])
@@ -69,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         print("verifier: stop requested; finishing current job", flush=True)
 
     signal.signal(signal.SIGTERM, on_term)
-    sub = Substrate(args.root)
+    sub = connect(args.substrate)
     while not stopping:
         n = run_once(sub, state_path=Path(args.state), workdir=Path(args.workdir), salts=args.salts,
                      max_workers=args.max_workers, stop=lambda: stopping)

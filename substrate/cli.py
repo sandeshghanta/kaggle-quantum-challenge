@@ -67,9 +67,10 @@ class Substrate:
         return self._blobs.put(data)
 
     def append(self, type: str, payload: dict, *, subject: str, actor: dict,
-               cause: str | None = None, type_v: int | None = None, principal: str | None = None) -> str:
+               cause: str | None = None, type_v: int | None = None, principal: str | None = None,
+               id: str | None = None) -> str:
         self._check(principal, type, subject, payload)
-        return self._store.append(type, payload, subject=subject, actor=actor, cause=cause, type_v=type_v)
+        return self._store.append(type, payload, subject=subject, actor=actor, cause=cause, type_v=type_v, id=id)
 
     # ── projections ────────────────────────────────────────────────────
     def frontier(self, benchmark: str, *, k: int = 20, verifier: str | None = None,

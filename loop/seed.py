@@ -9,6 +9,7 @@ from pathlib import Path
 
 from loop import config
 from loop.programs import pack
+from substrate import connect
 from substrate.cli import Substrate
 
 ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v1"
@@ -35,10 +36,12 @@ def seed_reference(sub: Substrate, *, island: str = "main") -> str:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root", required=True)
+    p.add_argument("--substrate", "--root", dest="substrate", required=True,
+                   help="data directory (in-process) or unix:/run/substrate/api.sock")
     args = p.parse_args(argv)
-    sub = Substrate(args.root)
-    sub.init()
+    sub = connect(args.substrate)
+    if isinstance(sub, Substrate):  # substrated registers schemas itself at startup
+        sub.init()
     print(seed_reference(sub))
     return 0
 

@@ -152,7 +152,8 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
                     if role is not None:
                         actor["role"] = role  # attested, not claimed
                     eid = sub.append(args["type"], args["payload"], subject=args["subject"], actor=actor,
-                                     cause=args.get("cause"), type_v=args.get("type_v"), principal=role)
+                                     cause=args.get("cause"), type_v=args.get("type_v"), principal=role,
+                                     id=args.get("id"))
                     return self._json(200, {"id": eid})
                 if method in READS:
                     result = getattr(sub, method)(**args)

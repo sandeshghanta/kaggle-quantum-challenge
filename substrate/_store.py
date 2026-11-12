@@ -66,13 +66,15 @@ class Store:
 
     # ── write ──────────────────────────────────────────────────────────
     def append(self, type: str, payload: dict, *, subject: str, actor: dict,
-               cause: str | None = None, type_v: int | None = None) -> str:
+               cause: str | None = None, type_v: int | None = None, id: str | None = None) -> str:
+        """Append one event. A caller-supplied `id` makes the write idempotent: appending the same id
+        again returns it without writing, so a client can retry after losing the reply."""
         if type_v is None:
             type_v = latest_version(type)
         if not isinstance(subject, str) or not _SUBJECT.match(subject):
             raise SchemaViolation(f"subject must look like 'prefix:rest', got {subject!r}")
         validate_payload(type, type_v, payload)
-        env = {"v": ENVELOPE_V, "id": _ulid.new_ulid(), "ts": _ulid.utc_now_iso(), "type": type,
+        env = {"v": ENVELOPE_V, "id": id or _ulid.new_ulid(), "ts": _ulid.utc_now_iso(), "type": type,
                "type_v": type_v, "subject": subject, "actor": actor, "cause": cause, "payload": payload}
         validate_envelope(env)
         try:
@@ -87,6 +89,12 @@ class Store:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (ENVELOPE_V, env["id"], env["ts"], type, type_v, subject, actor_json, cause, payload_json))
             db.execute("COMMIT")
+        except sqlite3.IntegrityError:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            if id is not None and db.execute("SELECT 1 FROM events WHERE id = ?", (id,)).fetchone():
+                return id  # already written by an earlier attempt
+            raise
         except sqlite3.OperationalError as e:
             if db.in_transaction:
                 db.execute("ROLLBACK")
