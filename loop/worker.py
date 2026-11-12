@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from loop import config, pool
+from loop.heartbeat import JobProgress, write_heartbeat
 from loop.pi_runner import run_pi, write_agent_dir
 from loop.programs import pack, unpack
 from substrate import connect
@@ -29,6 +30,7 @@ class WorkerConfig:
     max_tokens: int
     role_dir: Path
     worker_id: int
+    status_dir: Path | None = None
 
 
 def _lessons(sub: Substrate) -> str:
@@ -59,9 +61,12 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
     island = pool.pick_island(sub, rng)
     parent = pool.pick_parent(sub, island, rng)
     actor = config.actor("lab_assistant", role["version"], cfg.model)
-    ann = sub.append("attempt.announced", {"island": island, "plan": "pending"},
+    plan = f"{island}: improving parent {parent.removeprefix('sha256:')[:12]}"
+    ann = sub.append("attempt.announced", {"island": island, "plan": plan},
                      subject="prog:" + parent, actor=actor)
     job = Path(workroot) / ann
+    progress = JobProgress(cfg.status_dir, cfg.worker_id, island=island, parent=parent, announcement=ann)
+    outcome, summary = "failed", "crashed"
     try:
         bundle = job / "bundle"
         unpack(sub.get_blob(parent), bundle)
@@ -73,14 +78,16 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
         agent = write_agent_dir(job / "agent", base_url=cfg.base_url, model=cfg.model, api_key_env=cfg.api_key_env,
                                 context_window=cfg.context_window, max_tokens=cfg.max_tokens)
         run = run_pi(bundle, agent, prompt=prompt, system_append=cfg.role_dir / "system.md", tools=role["tools"],
-                     model=cfg.model, timeout_s=role["timeout_s"])
+                     model=cfg.model, timeout_s=role["timeout_s"], on_event=progress.on_event)
         sub.append("budget.spent", {"pool": "qwen", "tokens_in": run.tokens_in, "tokens_out": run.tokens_out,
                                     "tokens_cached": run.tokens_cached, "wall_seconds": round(run.seconds, 2)},
                    subject="pool:qwen", actor=actor, cause=ann)
         if not run.ok:
+            outcome, summary = "failed", (run.error or "failed")[:200]
             return "failed"
         after = pack(bundle)
         if after == before:
+            outcome, summary = "unchanged", _note(run.final_text)
             return "unchanged"
         program = sub.put_blob(after)
         # island.joined first: a crash between the two leaves an unjudged-but-placed program, never an orphan
@@ -89,8 +96,10 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
         sub.append("program.committed", {"blob": program, "parent": parent, "benchmark": config.BENCHMARK,
                                          "note": _note(run.final_text)},
                    subject="prog:" + program, actor=actor, cause=ann)
+        outcome, summary = "committed", _note(run.final_text)
         return "committed"
     finally:
+        progress.finish(outcome, summary)
         shutil.rmtree(job, ignore_errors=True)
 
 
@@ -106,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--context-window", type=int, default=32768)
     p.add_argument("--max-tokens", type=int, default=4096)
     p.add_argument("--role-dir", default=str(DEFAULT_ROLE_DIR))
+    p.add_argument("--status-dir", help="write worker-<id>.json heartbeats here (for the live status page)")
     args = p.parse_args(argv)
 
     stopping = False
@@ -117,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, on_term)
     cfg = WorkerConfig(args.base_url, args.model, args.api_key_env, args.context_window, args.max_tokens,
-                       Path(args.role_dir), args.id)
+                       Path(args.role_dir), args.id, Path(args.status_dir) if args.status_dir else None)
     sub = connect(args.substrate)
     rng = random.Random()
     failures = 0
@@ -128,13 +138,18 @@ def main(argv: list[str] | None = None) -> int:
             failures = failures + 1 if outcome == "failed" else 0
         except LookupError as e:  # no island/program yet
             print(f"worker {args.id}: waiting ({e})", flush=True)
+            write_heartbeat(cfg.status_dir, args.id, state="waiting", last_summary=str(e))
             failures = 0
             time.sleep(10)
         delay = backoff_seconds(failures)
         if delay:
             print(f"worker {args.id}: {failures} failures in a row; backing off {delay:.0f}s", flush=True)
             end = time.monotonic() + delay
+            beat_at = 0.0
             while not stopping and time.monotonic() < end:
+                if time.monotonic() >= beat_at:  # keep the heartbeat fresh through a long backoff
+                    write_heartbeat(cfg.status_dir, args.id, state="backoff", last_outcome="failed")
+                    beat_at = time.monotonic() + 30
                 time.sleep(0.5)
     print(f"worker {args.id}: finished current job, exiting", flush=True)
     return 0

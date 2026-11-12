@@ -77,3 +77,66 @@ def test_interrupted_job_leaves_only_orphan_announcement(sub, cfg, tmp_path, mon
 def test_backoff_grows_and_caps():  # review I5
     assert worker.backoff_seconds(0) == 0
     assert worker.backoff_seconds(1) < worker.backoff_seconds(3) <= worker.backoff_seconds(20) == 300
+
+
+def beat(tmp_path, n=1):
+    import json
+    return json.loads((tmp_path / "st" / f"worker-{n}.json").read_text())
+
+
+def test_plan_is_announced_not_pending(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False))
+    seed = only(sub, "program.committed")[0].payload["blob"]
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    [ann] = only(sub, "attempt.announced")
+    assert ann.payload["plan"] == f"main: improving parent {seed.removeprefix('sha256:')[:12]}"
+
+
+def test_heartbeats_follow_the_job(sub, cfg, tmp_path, monkeypatch):
+    import dataclasses
+    cfg = dataclasses.replace(cfg, status_dir=tmp_path / "st")
+    seen = {}
+
+    def run(workdir, agent_dir, **kw):
+        seen["start"] = beat(tmp_path)
+        kw["on_event"]({"type": "tool_execution_start", "toolName": "edit", "args": {"path": "gen.py"}})
+        kw["on_event"]({"type": "message_end", "message": {"role": "assistant", "usage": {"output": 7}}})
+        seen["mid"] = beat(tmp_path)
+        return fake_run(edit=True)(workdir, agent_dir)
+
+    monkeypatch.setattr(worker, "run_pi", run)
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    [ann] = only(sub, "attempt.announced")
+    assert seen["start"]["state"] == "thinking" and seen["start"]["island"] == "main"
+    assert seen["start"]["announcement"] == ann.id and seen["start"]["started_at"]
+    assert seen["mid"]["turns"] == 1 and seen["mid"]["last_tool"] == "edit"
+    assert seen["mid"]["files_edited"] == ["gen.py"] and seen["mid"]["tokens_out"] == 7
+    end = beat(tmp_path)
+    assert end["state"] == "idle" and end["last_outcome"] == "committed"
+    assert end["last_summary"] == "tightened Newton step" and end["finished_at"]
+
+
+def test_failed_job_heartbeat_says_failed(sub, cfg, tmp_path, monkeypatch):
+    import dataclasses
+    cfg = dataclasses.replace(cfg, status_dir=tmp_path / "st")
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, ok=False, error="timeout"))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    assert beat(tmp_path)["last_outcome"] == "failed" and beat(tmp_path)["last_summary"] == "timeout"
+
+
+def test_crash_leaves_idle_failed_heartbeat(sub, cfg, tmp_path, monkeypatch):
+    import dataclasses
+    cfg = dataclasses.replace(cfg, status_dir=tmp_path / "st")
+
+    def boom(*a, **k):
+        raise RuntimeError("kaput")
+    monkeypatch.setattr(worker, "run_pi", boom)
+    with pytest.raises(RuntimeError):
+        worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    assert beat(tmp_path)["state"] == "idle" and beat(tmp_path)["last_outcome"] == "failed"
+
+
+def test_no_status_dir_writes_nothing(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    assert not (tmp_path / "st").exists()

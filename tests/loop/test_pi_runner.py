@@ -49,3 +49,14 @@ def test_usage_is_summed_over_turns(tmp_path, monkeypatch):  # review I6
         r = run_pi(work, agent, prompt="Look.", system_append=sysfile, tools=["read"], model="fake-model",
                    timeout_s=60)
     assert r.ok and r.tokens_out == 2 * 20 and r.tokens_in == 2 * 100
+
+
+def test_on_event_sees_parsed_events(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_KEY", "k")
+    events = []
+    with FakeOpenAI([{"text": "SUMMARY: hi"}]) as fake:
+        work, agent, sysfile = setup(tmp_path, fake.base_url)
+        r = run_pi(work, agent, prompt="hi", system_append=sysfile, tools=[], model="fake-model", timeout_s=60,
+                   on_event=events.append)
+    assert r.ok and events and all(isinstance(e, dict) for e in events)
+    assert any(e.get("type") == "message_end" for e in events)

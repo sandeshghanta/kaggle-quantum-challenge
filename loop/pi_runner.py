@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,7 +51,7 @@ def _text(message: dict) -> str:
 
 
 def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, tools: list[str],
-           model: str, timeout_s: float) -> PiRun:
+           model: str, timeout_s: float, on_event: Callable[[dict], None] | None = None) -> PiRun:
     cmd = ["pi", "--mode", "json", "--no-session", "--no-approve", "-nc",
            "--provider", PROVIDER, "--model", f"{PROVIDER}/{model}",
            *(["--tools", ",".join(tools)] if tools else ["-nt"]),
@@ -88,6 +89,11 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
                     ev = json.loads(line.rstrip(b"\r"))
                 except ValueError:
                     continue
+                if on_event is not None:
+                    try:
+                        on_event(ev)
+                    except Exception:  # status reporting must never break a job
+                        pass
                 if ev.get("usage"):
                     usage = ev["usage"]
                 if ev.get("type") == "message_end" and ev.get("message", {}).get("role") == "assistant":
