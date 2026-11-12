@@ -127,7 +127,7 @@ def unanswered_instructions(sub: Substrate) -> list:
 
 
 # ── digest ─────────────────────────────────────────────────────────────
-def _island_rows(sub, now, meas, attempts, in_island) -> list[dict]:
+def build_digest_islands(sub, now, meas, attempts, in_island) -> list[dict]:
     rows = []
     for name, isl in pool.islands(sub).items():
         best, before = best_cost(meas, island=name, in_island=in_island), \
@@ -188,6 +188,12 @@ def spend(sub: Substrate, now: datetime, window: timedelta = DAY) -> dict:
     return out
 
 
+def open_questions(sub: Substrate, now: datetime) -> list[dict]:
+    """Questions asked in the last 7 days (there is no 'answered' event), newest last, at most 10."""
+    return [{"id": ev.id, "t": ev.ts, "question": ev.payload["question"], "context": ev.payload.get("context", "")}
+            for ev in events(sub, "question.asked") if parse_ts(ev.ts) >= now - QUESTION_WINDOW][-10:]
+
+
 def build_digest(sub: Substrate, *, now: datetime) -> dict:
     now = now.astimezone(UTC)
     meas = measurements(sub)
@@ -209,14 +215,12 @@ def build_digest(sub: Substrate, *, now: datetime) -> dict:
                        "best_since": d["best_since"]} for d in shown]
 
     lessons = events(sub, "lessons.published")
-    questions = [{"id": ev.id, "t": ev.ts, "question": ev.payload["question"],
-                  "context": ev.payload.get("context", "")}
-                 for ev in events(sub, "question.asked") if parse_ts(ev.ts) >= now - QUESTION_WINDOW][-10:]
+    questions = open_questions(sub, now)
 
     return {
         "now": iso(now),
         "last_visit": visit.ts if visit else None,
-        "islands": _island_rows(sub, now, meas, attempts, in_island),
+        "islands": build_digest_islands(sub, now, meas, attempts, in_island),
         "frontier": frontier,
         "directions": direction_rows,
         "rejections_24h": _rejections(sub, now),
