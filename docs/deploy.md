@@ -63,6 +63,23 @@ On first activation: `research-loop-checkout` clones the repo and runs `uv sync`
 `research-loop-seed` registers schemas and seeds the reference generator, then the verifier and
 `research-loop-worker@1..8` start under `research-loop.target`.
 
+## 3b. Researcher login (one-time human step)
+
+The researcher is Claude Opus on the owner's Claude Pro plan, driven through the `pi-claude-bridge`
+extension. After the first rebuild, `research-loop-researcher-setup` installs Claude Code and the extension
+into `/var/lib/research-loop/researcher` (the researcher's persistent home). Then log in once, before the
+researcher service can work:
+
+```sh
+sudo -u rl-researcher -H claude auth login     # or the helper: sudo research-loop-researcher-login
+sudo systemctl restart research-loop-researcher
+```
+
+The login lives in that home (mode 0700). Never set `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` or
+`ANTHROPIC_AUTH_TOKEN` for the researcher: it must bill the Pro plan, and it refuses to start if one is set.
+The researcher writes `/var/lib/research-loop/status/researcher/researcher.json` (group `status-readers`).
+Set `services.research-loop.researcher.enable = false` to run without it.
+
 ## 4. Operate
 
 | Task | Command |

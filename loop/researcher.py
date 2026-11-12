@@ -2,7 +2,7 @@
 
 No model of its own: this is plain Python. A visit builds the digest from the substrate, shows it to Claude
 Opus through pi (single shot, no tools), and records the answer as events through loop.decide. The model never
-writes files. After every visit snapshot.json is rewritten for the dashboard.
+writes files. After every visit researcher.json is rewritten for the status page.
 
 The pi run is NOT wrapped in the bubblewrap sandbox: it has no tools (nothing it says can touch the machine) and
 the pi-claude-bridge extension needs the owner's Claude login in HOME.
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from loop import config, decide, digest, snapshot
+from loop import config, decide, digest, researcher_view
 from loop.pi_runner import PiRun, run_pi, write_agent_dir
 from substrate import connect
 from substrate.cli import Substrate
@@ -37,10 +37,10 @@ class ResearcherConfig:
     provider: str
     agent_dir: Path
     role_dir: Path = DEFAULT_ROLE_DIR
-    snapshot_path: Path | None = None
+    status_out: Path | None = None
     interval_min: float = 45
     cap_pct: float = 80
-    snapshot_interval_min: float = 15
+    status_interval_min: float = 15
 
 
 @dataclass(frozen=True)
@@ -136,6 +136,12 @@ class QuotaScan:
         return {k: v for k, v in self.found.items()}
 
 
+def write_status(sub: Substrate, cfg: ResearcherConfig, *, now: datetime, next_visit: datetime | None) -> None:
+    """Write researcher.json (this service's only status output; live data is another service's live.json)."""
+    researcher_view.write_view(cfg.status_out, researcher_view.build_researcher_view(
+        sub, now=now, cap_pct=cfg.cap_pct, next_visit=next_visit))
+
+
 # ── one visit ──────────────────────────────────────────────────────────
 def run_visit(sub: Substrate, cfg: ResearcherConfig, *, trigger: str, cause: str | None = None,
               now: datetime) -> VisitResult:
@@ -167,9 +173,8 @@ def run_visit(sub: Substrate, cfg: ResearcherConfig, *, trigger: str, cause: str
     if (quota := scan.result()) is not None:
         quota_event = sub.append("quota.observed", quota, subject="pool:claude", actor=actor, cause=visit)
 
-    if cfg.snapshot_path is not None:
-        snapshot.write_snapshot(cfg.snapshot_path, snapshot.build_snapshot(
-            sub, now=now, cap_pct=cfg.cap_pct, interval_min=cfg.interval_min))
+    if cfg.status_out is not None:
+        write_status(sub, cfg, now=now, next_visit=now + timedelta(minutes=cfg.interval_min))
     return VisitResult(visit, ids, error, run, quota_event)
 
 
@@ -204,15 +209,14 @@ def tick(sub: Substrate, cfg: ResearcherConfig, sched: Schedule, *, now: datetim
             sched.log.append(f"visit {result.visit_id} ({trigger}): "
                              + (f"error: {result.error}" if result.error else f"{len(result.event_ids)} events"))
             ran = trigger
-            sched.next_snapshot = now + timedelta(minutes=cfg.snapshot_interval_min)
+            sched.next_snapshot = now + timedelta(minutes=cfg.status_interval_min)
         elif reason != sched.last_blocked:
             sched.last_blocked = reason
             sched.log.append(f"visit skipped: {reason}")
-    if (cfg.snapshot_path is not None and cfg.snapshot_interval_min > 0 and now >= sched.next_snapshot
+    if (cfg.status_out is not None and cfg.status_interval_min > 0 and now >= sched.next_snapshot
             and ran is None):
-        snapshot.write_snapshot(cfg.snapshot_path, snapshot.build_snapshot(
-            sub, now=now, cap_pct=cfg.cap_pct, interval_min=cfg.interval_min))
-        sched.next_snapshot = now + timedelta(minutes=cfg.snapshot_interval_min)
+        write_status(sub, cfg, now=now, next_visit=sched.next_due)
+        sched.next_snapshot = now + timedelta(minutes=cfg.status_interval_min)
     return ran
 
 
@@ -226,9 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="claude-opus-5-5")
     p.add_argument("--agent-dir", required=True,
                    help="persistent pi agent dir (production: the pi-claude-bridge extension is installed here)")
-    p.add_argument("--snapshot", help="where to write snapshot.json after each visit")
-    p.add_argument("--snapshot-interval-min", type=float, default=15,
-                   help="also refresh snapshot.json this often between visits (0 = only after visits)")
+    p.add_argument("--status-out", help="path of researcher.json, rewritten after each visit")
+    p.add_argument("--status-interval-min", type=float, default=15,
+                   help="also refresh researcher.json this often between visits (0 = only after visits)")
     p.add_argument("--role-dir", default=str(DEFAULT_ROLE_DIR))
     p.add_argument("--base-url", help="tests: OpenAI-compatible endpoint; writes models.json into --agent-dir")
     p.add_argument("--api-key-env", help="tests: env var holding the endpoint's API key (with --base-url)")
@@ -252,9 +256,9 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, on_term)
     cfg = ResearcherConfig(model=args.model, provider=args.provider, agent_dir=Path(args.agent_dir),
-                           role_dir=Path(args.role_dir), snapshot_path=Path(args.snapshot) if args.snapshot else None,
+                           role_dir=Path(args.role_dir), status_out=Path(args.status_out) if args.status_out else None,
                            interval_min=args.interval_min, cap_pct=args.cap_pct,
-                           snapshot_interval_min=args.snapshot_interval_min)
+                           status_interval_min=args.status_interval_min)
     sub = connect(args.substrate)
     if isinstance(sub, Substrate):
         sub.init()

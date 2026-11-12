@@ -36,7 +36,7 @@ def sub(tmp_path, clock):
 @pytest.fixture
 def cfg(tmp_path):
     return researcher.ResearcherConfig(model="claude-opus-5-5", provider="claude-bridge", agent_dir=tmp_path / "agent",
-                                       snapshot_path=tmp_path / "out" / "snapshot.json")
+                                       status_out=tmp_path / "out" / "researcher.json")
 
 
 def fake_pi(text, *, ok=True, events=(), seen=None):
@@ -144,8 +144,8 @@ def test_visit_records_the_full_chain(sub, cfg, clock, monkeypatch):
     assert quota.payload["five_hour_pct"] == 40.0 and res.quota_event == quota.id
     assert seen["tools"] == [] and seen["provider"] == "claude-bridge" and seen["sandboxed"] is False
     assert '"id": "main"' in seen["prompt"] and "{digest}" not in seen["prompt"]
-    snap = json.loads(cfg.snapshot_path.read_text())
-    assert snap["example"] is False and snap["marks"][0]["label"] == "D1"
+    snap = json.loads(cfg.status_out.read_text())
+    assert snap["current_direction"]["id"] == "D1" and "marks" not in snap
     assert digest.unanswered_instructions(sub) == []
 
 
@@ -169,7 +169,7 @@ def test_failed_pi_run(sub, cfg, clock, monkeypatch):
     monkeypatch.setattr(researcher, "run_pi", fake_pi("", ok=False))
     res = researcher.run_visit(sub, cfg, trigger="schedule", now=clock.t)
     assert "pi failed" in res.error and of(sub, "direction") == []
-    assert cfg.snapshot_path.exists()
+    assert cfg.status_out.exists()
 
 
 # ── service loop ───────────────────────────────────────────────────────
@@ -226,14 +226,14 @@ def test_gate_blocks_visits_and_logs_once(sub, cfg, clock, monkeypatch):
     assert researcher.tick(sub, cfg, sched, now=clock.t) == "schedule"
 
 
-def test_snapshot_refreshes_between_visits(sub, cfg, clock, monkeypatch):
+def test_status_refreshes_between_visits(sub, cfg, clock, monkeypatch):
     count_visits(monkeypatch)
     sched = researcher.initial_schedule(sub, cfg, now=clock.t)
-    researcher.tick(sub, cfg, sched, now=clock.t)   # visit (mocked: writes no snapshot)
-    assert not cfg.snapshot_path.exists()
+    researcher.tick(sub, cfg, sched, now=clock.t)   # visit (mocked: writes no status)
+    assert not cfg.status_out.exists()
     clock.advance(minutes=16)
     researcher.tick(sub, cfg, sched, now=clock.t)
-    assert json.loads(cfg.snapshot_path.read_text())["generated_at"] == "2026-11-11T12:16:00Z"
+    assert json.loads(cfg.status_out.read_text())["generated_at"] == "2026-11-11T12:16:00Z"
 
 
 # ── real pi against the fake model ─────────────────────────────────────
@@ -245,7 +245,7 @@ def test_real_pi_visit_against_fake_model(sub, tmp_path, clock, monkeypatch):
         agent = write_agent_dir(tmp_path / "agent", base_url=fake.base_url, model="fake-model", api_key_env="FAKE_KEY",
                                 context_window=200000, max_tokens=4096)
         cfg = researcher.ResearcherConfig(model="fake-model", provider="qwen", agent_dir=agent,
-                                          snapshot_path=tmp_path / "snapshot.json")
+                                          status_out=tmp_path / "researcher.json")
         res = researcher.run_visit(sub, cfg, trigger="schedule", now=clock.t)
     assert res.error is None, res.error
     assert len(of(sub, "direction")) == 1 and len(of(sub, "lessons.published")) == 1

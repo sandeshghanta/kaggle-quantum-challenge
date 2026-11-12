@@ -15,7 +15,7 @@ Five logical parts, each with one job:
 
 | Part | Job |
 |---|---|
-| **Researcher** | A strong model (Claude Opus) that visits a few times a day, reads what happened, and sets direction: which ideas to pursue, what has been learned. |
+| **Researcher** | A strong model (Claude Opus) that visits every 45 minutes (budget permitting), reads what happened, and sets direction: which ideas to pursue, what has been learned. |
 | **Lab assistants** | Many cheap agents (Qwen) that run experiments nonstop, following the researcher's directions: each one edits a circuit generator and submits it. |
 | **Verifier** | Exact, local scoring of every submission against the competition's own checker. Nothing counts until it says so. |
 | **Substrate** | The permanent record: an append-only, validated event log plus stored programs and circuits. Every other part reads and writes only through it. |
@@ -145,7 +145,7 @@ Consequences that shape the research loop:
 
 - **Volume beats precision.** Scoring is exact and free, so a cheap model's edit only has to be
   right occasionally: the verifier finds the good ones. Nothing counts until it is verified.
-- **Strong-model time is the scarcest input.** Opus runs a few times a day, so it never does
+- **Strong-model time is the scarcest input.** Opus runs every 45 minutes at most, only while plan usage is below 80%, so it never does
   individual experiments. It reads a prepared summary and decides direction: which lines of attack
   get effort, what has been learned, what to try next.
 - **Many assistants must not duplicate each other.** Work is not assigned one by one; programs are
