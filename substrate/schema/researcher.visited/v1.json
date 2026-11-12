@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/researcher.visited/v1.json",
+  "title": "researcher.visited",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-11",
+  "description": "A researcher visit began. Written at the START of the visit; every decision of the visit (direction, lessons.published, question.asked) has this event's id as its `cause`, and its own `cause` is the human.instructed that triggered it, if any. Subject is bench:<name>.",
+  "type": "object",
+  "required": [
+    "trigger",
+    "digest",
+    "model"
+  ],
+  "properties": {
+    "trigger": {
+      "type": "string",
+      "enum": [
+        "schedule",
+        "human"
+      ],
+      "description": "Why the visit ran: the schedule fired, or a human instruction was waiting."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Blob digest of the digest JSON the researcher was shown, so the decision can be audited against exactly what it saw."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model that made the decisions, e.g. 'claude-opus-5-5'."
+    }
+  }
+}

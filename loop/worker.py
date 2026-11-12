@@ -63,7 +63,7 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
     actor = config.actor("lab_assistant", role["version"], cfg.model)
     plan = f"{island}: improving parent {parent.removeprefix('sha256:')[:12]}"
     ann = sub.append("attempt.announced", {"island": island, "plan": plan},
-                     subject="prog:" + parent, actor=actor)
+                     subject="prog:" + parent, actor=actor, cause=pool.island_config_event(sub, island))
     job = Path(workroot) / ann
     progress = JobProgress(cfg.status_dir, cfg.worker_id, island=island, parent=parent, announcement=ann)
     outcome, summary = "failed", "crashed"

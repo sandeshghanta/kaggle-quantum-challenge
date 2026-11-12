@@ -39,6 +39,15 @@ let
     PrivateTmp = true;
   } // extra;
   status = "${cfg.dataDir}/status";
+  rhome = "${cfg.dataDir}/researcher";   # the researcher's persistent home: Claude login, npm prefix, pi agent dir
+  statusDir = "${cfg.dataDir}/status/researcher";   # researcher.json; read by the status page (group status-readers)
+  claudeBin = "${rhome}/npm/node_modules/.bin";
+  # The one human step: log the researcher user in to the Claude Pro plan (see docs/deploy.md).
+  researcherLogin = pkgs.writeShellScriptBin "research-loop-researcher-login" ''
+    set -euo pipefail
+    exec sudo -u rl-researcher -H env HOME=${rhome} PATH=${claudeBin}:${lib.makeBinPath [ pkgs.nodejs_22 pkgs.coreutils ]}:$PATH \
+      claude auth login "$@"
+  '';
   update = pkgs.writeShellScriptBin "research-loop-update" ''
     set -euo pipefail
     sudo -u rl-deploy env ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "${k}=${v}") uvEnv)} \
@@ -50,6 +59,7 @@ let
     for i in $(seq 1 ${toString cfg.workers}); do
       systemctl restart "research-loop-worker@$i.service"   # each drains its current job first
     done
+    ${lib.optionalString cfg.researcher.enable "systemctl restart research-loop-researcher.service   # drains the current visit first"}
     systemctl restart substrated.service                   # last: clients retry across the restart
   '';
 in {
@@ -74,17 +84,25 @@ in {
       description = "Port of the status page. The firewall does not open it: only tailscale0 (trusted) can reach it."; };
     statusPage.tailscaleServe = lib.mkOption { type = lib.types.bool; default = false;
       description = "Also expose the page as HTTPS on the tailnet with `tailscale serve`."; };
+    researcher.enable = lib.mkOption { type = lib.types.bool; default = true;
+      description = "Run the researcher service (needs a one-time Claude login: see docs/deploy.md)."; };
+    researcher.intervalMin = lib.mkOption { type = lib.types.int; default = 45; };
+    researcher.capPct = lib.mkOption { type = lib.types.int; default = 80;
+      description = "No visit while the 5-hour or weekly plan usage is at or above this percentage."; };
+    researcher.model = lib.mkOption { type = lib.types.str; default = "claude-opus-5-5"; };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (lib.mkMerge [ {
     users.groups = lib.genAttrs [ "substrate" "substrate-clients" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed"
                                   "rl-live" "rl-status" "status-readers" ] (_: { });
+    # live updater: read-only substrate client (role "live" in policy.json); status page: reads files only
     users.users = lib.genAttrs [ "substrate" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ]
       (u: { isSystemUser = true; group = u; }
-          // lib.optionalAttrs (lib.hasPrefix "rl-" u && u != "rl-deploy") { extraGroups = [ "substrate-clients" ]; });
-    # live updater: read-only substrate client (role "live" in policy.json); status page: reads files only
-    users.users.rl-live = { isSystemUser = true; group = "rl-live"; extraGroups = [ "substrate-clients" "status-readers" ]; };
-    users.users.rl-status = { isSystemUser = true; group = "rl-status"; extraGroups = [ "status-readers" ]; };
+          // lib.optionalAttrs (lib.hasPrefix "rl-" u && u != "rl-deploy") { extraGroups = [ "substrate-clients" ]; })
+      // {
+        rl-live = { isSystemUser = true; group = "rl-live"; extraGroups = [ "substrate-clients" "status-readers" ]; };
+        rl-status = { isSystemUser = true; group = "rl-status"; extraGroups = [ "status-readers" ]; };
+      };
     programs.nix-ld.enable = true;
     environment.systemPackages = [ update ];
 
@@ -100,9 +118,6 @@ in {
       "d ${status} 0755 root root -"
       "d ${status}/live 0750 rl-live status-readers -"
       "d ${status}/workers 0750 rl-worker rl-live -"        # workers write heartbeats, the live updater reads
-      # TODO: the researcher service (another change) should own this as rl-researcher:status-readers 0750;
-      # until it defines that user, root-owned 0770 keeps the directory writable by group status-readers.
-      "d ${status}/researcher 0770 root status-readers -"
     ];
 
     systemd.targets.research-loop = {
@@ -256,5 +271,59 @@ in {
       '';
       scriptArgs = "%i";
     };
-  };
+  } (lib.mkIf cfg.researcher.enable {
+    users.groups.rl-researcher = { };
+    users.groups.status-readers = { };
+    users.users.rl-researcher = { isSystemUser = true; group = "rl-researcher"; home = rhome;
+                                  extraGroups = [ "substrate-clients" ]; };
+    environment.systemPackages = [ researcherLogin ];
+    systemd.tmpfiles.rules = [
+      "d ${rhome} 0700 rl-researcher rl-researcher -"
+      "d ${cfg.dataDir}/status 0755 root root -"
+      "d ${statusDir} 0750 rl-researcher status-readers -"
+    ];
+    systemd.targets.research-loop.wants = [ "research-loop-researcher.service" ];
+
+    # Installs Claude Code and the pi-claude-bridge extension into the researcher's home (idempotent).
+    # Not verifiable without the real npm registry: see docs/deploy.md.
+    systemd.services.research-loop-researcher-setup = {
+      description = "Install Claude Code and pi-claude-bridge for the researcher";
+      after = [ "network-online.target" "systemd-tmpfiles-setup.service" ];
+      wants = [ "network-online.target" ];
+      inherit path;
+      environment = { HOME = rhome; PI_CODING_AGENT_DIR = "${rhome}/pi-agent"; };
+      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; User = "rl-researcher"; Group = "rl-researcher";
+                        Restart = "on-failure"; RestartSec = 60; };
+      script = ''
+        mkdir -p ${rhome}/npm ${rhome}/pi-agent
+        npm install --prefix ${rhome}/npm @anthropic-ai/claude-code
+        export PATH=${claudeBin}:$PATH
+        pi install npm:pi-claude-bridge
+      '';
+    };
+
+    # Plain Python, no model of its own. The pi run inside is deliberately not sandboxed: it has no tools, and the
+    # bridge needs the Claude login in HOME. The environment must never carry an Anthropic API key or base URL:
+    # the researcher bills the Pro plan login, and loop.researcher refuses to start if one is set.
+    systemd.services.research-loop-researcher = {
+      description = "Research loop researcher (one Claude Opus visit every ${toString cfg.researcher.intervalMin} minutes, budget permitting)";
+      after = [ "research-loop-seed.service" "research-loop-researcher-setup.service" ];
+      requires = [ "research-loop-seed.service" "research-loop-researcher-setup.service" ];
+      partOf = [ "research-loop.target" ];
+      inherit path;
+      environment = runEnv // { HOME = rhome; PI_CODING_AGENT_DIR = "${rhome}/pi-agent"; };
+      # stop timeout outlasts the visit timeout (900 s) so a stopping researcher always records its result
+      serviceConfig = roleUnit {
+        user = "rl-researcher";
+        writable = [ rhome statusDir ];
+        extra = { TimeoutStopSec = 1000; MemoryMax = "2G"; };
+      };
+      script = ''
+        export PATH=${claudeBin}:$PATH
+        exec ${python} -m loop.researcher --substrate ${target} --interval-min ${toString cfg.researcher.intervalMin} \
+          --cap-pct ${toString cfg.researcher.capPct} --provider claude-bridge --model ${lib.escapeShellArg cfg.researcher.model} \
+          --agent-dir ${rhome}/pi-agent --status-out ${statusDir}/researcher.json
+      '';
+    };
+  }) ]);
 }

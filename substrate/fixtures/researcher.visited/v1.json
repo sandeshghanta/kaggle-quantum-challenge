@@ -1,0 +1,5 @@
+{
+  "trigger": "schedule",
+  "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "model": "claude-opus-5-5"
+}

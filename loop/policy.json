@@ -5,7 +5,9 @@
     "rl-verifier": "verifier",
     "rl-seed": "seed",
     "rl-live": "live",
-    "substrate": "substrate"
+    "substrate": "substrate",
+    "rl-researcher": "researcher",
+    "sandeshg": "viewer"
   },
   "roles": {
     "worker": {
@@ -13,8 +15,16 @@
       "append": {
         "attempt.announced": {},
         "program.committed": {},
-        "island.joined": {"via": ["submit"]},
-        "budget.spent": {"pool": ["qwen"]}
+        "island.joined": {
+          "via": [
+            "submit"
+          ]
+        },
+        "budget.spent": {
+          "pool": [
+            "qwen"
+          ]
+        }
       }
     },
     "verifier": {
@@ -22,7 +32,11 @@
       "append": {
         "candidate.measured": {},
         "candidate.rejected": {},
-        "budget.spent": {"pool": ["cpu"]}
+        "budget.spent": {
+          "pool": [
+            "cpu"
+          ]
+        }
       }
     },
     "seed": {
@@ -30,7 +44,11 @@
       "append": {
         "island.created": {},
         "program.committed": {},
-        "island.joined": {"via": ["seed"]}
+        "island.joined": {
+          "via": [
+            "seed"
+          ]
+        }
       }
     },
     "live": {
@@ -39,7 +57,37 @@
     },
     "substrate": {
       "blob": false,
-      "append": {"schema.registered": {}}
+      "append": {
+        "schema.registered": {}
+      }
+    },
+    "researcher": {
+      "blob": true,
+      "append": {
+        "researcher.visited": {},
+        "direction": {},
+        "island.created": {},
+        "island.updated": {},
+        "island.joined": {
+          "via": [
+            "migration",
+            "restart"
+          ]
+        },
+        "lessons.published": {},
+        "question.asked": {},
+        "quota.observed": {},
+        "loop.config_changed": {},
+        "budget.spent": {
+          "pool": [
+            "claude"
+          ]
+        }
+      }
+    },
+    "viewer": {
+      "blob": false,
+      "append": {}
     }
   }
 }

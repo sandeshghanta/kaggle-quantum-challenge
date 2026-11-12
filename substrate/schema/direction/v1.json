@@ -5,7 +5,7 @@
   "version": 1,
   "status": "active",
   "since": "2026-11-11",
-  "description": "The record of ONE researcher decision: what it decided, why, and what it expects to happen. Island changes that carry the decision out (island.created / island.updated) are separate events whose `cause` is this direction's id. Several directions can be live at once. Code, not the model, later marks each prediction met / missed / open from events; that is the decision log. Subject is bench:<name>.",
+  "description": "The record of ONE researcher decision: what it decided, why, and what it expects to happen. Its `cause` is the researcher.visited event of the visit. Island changes that carry the decision out (island.created / island.updated / island.joined) are separate events whose `cause` is this direction's id. Several directions can be live at once. Code, not the model, later marks each prediction met / missed / open from events; that is the decision log. Subject is bench:<name>.",
   "type": "object",
   "required": [
     "brief",
@@ -25,23 +25,35 @@
       "type": "object",
       "required": [
         "metric",
+        "island",
         "threshold",
         "by_attempts"
       ],
-      "description": "A checkable expectation. Example: {metric: 'island:3/best_cost', threshold: 125000, by_attempts: 300} means island 3's best cost should drop below 125,000 within 300 attempts made after this direction.",
+      "description": "A checkable expectation, evaluated by code. Example: {metric: 'island_best_cost', island: 'marsyas', threshold: 118000, by_attempts: 300} is met if island marsyas's best verified cost falls below 118,000 within 300 attempt.announced events in that island after this direction, and missed if 300 such attempts pass without it. For metric 'bench_best_cost' set island to null; attempts are then counted across all islands.",
       "properties": {
         "metric": {
           "type": "string",
-          "description": "What is measured, e.g. 'island:<id>/best_cost' or 'bench/best_cost'."
+          "enum": [
+            "island_best_cost",
+            "bench_best_cost"
+          ],
+          "description": "What is measured: the best verified cost of one island, or of the whole benchmark."
+        },
+        "island": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Island id for island_best_cost; null for bench_best_cost."
         },
         "threshold": {
           "type": "number",
-          "description": "Value the metric must reach (below, for costs)."
+          "description": "Value the metric must fall below (lower cost is better)."
         },
         "by_attempts": {
           "type": "integer",
           "minimum": 1,
-          "description": "Attempts after this direction within which it must happen."
+          "description": "Number of attempt.announced events (in that island, or all islands for bench_best_cost) after this direction within which the threshold must be reached."
         }
       }
     },

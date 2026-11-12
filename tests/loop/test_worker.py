@@ -51,6 +51,15 @@ def test_committed_job_records_full_chain(sub, cfg, tmp_path, monkeypatch):
     assert not any((tmp_path / "w").iterdir())
 
 
+def test_announcement_cause_is_latest_island_config_event(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False))
+    upd = sub.append("island.updated", {"island": "main", "weight": 2.0}, subject="bench:invsqrt",
+                     actor={"role": "t"})
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    [ann] = only(sub, "attempt.announced")
+    assert ann.cause == upd
+
+
 def test_unchanged_job_commits_nothing(sub, cfg, tmp_path, monkeypatch):  # Review Focus 3
     monkeypatch.setattr(worker, "run_pi", fake_run(edit=False))
     assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "unchanged"
