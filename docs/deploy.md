@@ -40,6 +40,7 @@ services.research-loop = {
   model.baseUrl = "http://spark-9a7e.stalk-rudd.ts.net:8000/v1";
   model.name = "nvidia/Qwen3.8-Flash-Next-FP4-Local";
   model.contextWindow = 32768;
+  model.egressAllow = [ "<spark tailnet IP>" ];   # workers may reach only the Spark (and localhost DNS)
   verifier.maxWorkers = 12;          # leave a few of the 16 cores for workers and the OS
   verifier.salts = [ 1 2 3 4 ];
 };
@@ -47,6 +48,12 @@ services.research-loop = {
 
 The Spark endpoint needs no key, so `model.apiKeyFile` stays unset. The repo is public, so no
 deploy key is needed.
+
+**Worker egress.** Lab assistants run model-written code, so `model.egressAllow` limits the worker
+units to the listed addresses. Find the Spark's address with `tailscale ip -4 spark-9a7e`. The filter is
+systemd's per-unit IP filter, enforced in the kernel for every process in the unit, including the
+sandboxed jobs. Localhost stays allowed because DNS goes through dnsmasq on 127.0.0.1. If the Spark's
+tailnet IP ever changes, workers fail with connection timeouts until the option is updated.
 
 **Run exactly one verifier.** The module defines a single `research-loop-verifier` unit on
 purpose: nothing claims a program before verifying it, so a second instance would score every

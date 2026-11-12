@@ -53,3 +53,11 @@ def test_live_updater_samples_hardware_and_writes_history():
     unit = unit[:unit.index("systemd.services.research-loop-statuspage")]
     for flag in ("--history ${status}/live/history.json", "--qwen-base-url", "--disk-path ${cfg.dataDir}"):
         assert flag in unit
+
+
+def test_worker_egress_allow_list():
+    assert "model.egressAllow = lib.mkOption" in MODULE
+    unit = MODULE[MODULE.index('systemd.services."research-loop-worker@" = {'):]
+    unit = unit[:unit.index("script =")]
+    assert 'IPAddressDeny = "any"' in unit and 'IPAddressAllow = [ "localhost" ] ++ cfg.model.egressAllow' in unit
+    assert "model.egressAllow = [ ]" in VM

@@ -24,6 +24,7 @@
     workers = 2;
     model.baseUrl = "http://127.0.0.1:8099/v1";
     model.name = "fake-model";
+    model.egressAllow = [ ];     # fake model is on localhost: workers may reach nothing else
     verifier.maxWorkers = 6;
     verifier.salts = [ 1 ];
     researcher.enable = false;   # no Claude login in the VM

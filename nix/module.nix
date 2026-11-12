@@ -79,6 +79,12 @@ in {
     # str, not path: a Nix path literal would copy the secret into the world-readable store
     model.apiKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; };
     model.contextWindow = lib.mkOption { type = lib.types.int; default = 32768; };
+    model.egressAllow = lib.mkOption { type = lib.types.nullOr (lib.types.listOf lib.types.str); default = null;
+      description = ''
+        IP addresses or CIDRs the lab-assistant workers may reach, e.g. the Spark's tailnet address
+        [ "100.101.102.103" ]. When set, everything else is denied for the whole worker unit, including the
+        sandboxed pi jobs and builds; localhost stays allowed for DNS. The substrate socket is a Unix socket and
+        is not affected. null leaves egress unrestricted.''; };
     verifier.maxWorkers = lib.mkOption { type = lib.types.int; default = 12; };
     verifier.salts = lib.mkOption { type = lib.types.listOf lib.types.int; default = [ 1 2 3 4 ]; };
     viewers = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ];
@@ -266,7 +272,10 @@ in {
         user = "rl-worker";
         writable = [ "${cfg.dataDir}/work/workers" "${status}/workers" ];
         extra = { MemoryMax = "2G"; CPUQuota = "50%"; TimeoutStopSec = 1000; }
-          // lib.optionalAttrs (cfg.model.apiKeyFile != null) { LoadCredential = [ "apikey:${cfg.model.apiKeyFile}" ]; };
+          // lib.optionalAttrs (cfg.model.apiKeyFile != null) { LoadCredential = [ "apikey:${cfg.model.apiKeyFile}" ]; }
+          # cgroup-level filter: applies to every process in the unit, bubblewrap children included
+          // lib.optionalAttrs (cfg.model.egressAllow != null) {
+            IPAddressDeny = "any"; IPAddressAllow = [ "localhost" ] ++ cfg.model.egressAllow; };
       };
       script = ''
         if [ -n "''${CREDENTIALS_DIRECTORY:-}" ] && [ -f "$CREDENTIALS_DIRECTORY/apikey" ]; then
