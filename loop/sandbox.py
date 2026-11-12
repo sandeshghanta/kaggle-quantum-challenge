@@ -34,13 +34,14 @@ def wrap(cmd: list[str], *, rw: list[Path], ro: list[Path], network: bool) -> li
     args = [bwrap, "--die-with-parent", "--unshare-all", "--new-session"]
     if network:
         args.append("--share-net")
+    # private /tmp first: rw/ro paths that live under /tmp are bound on top of it afterwards
+    args += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--setenv", "HOME", "/tmp"]
     for path in SYSTEM_RO:
         args += ["--ro-bind-try", path, path]
     for path in ro:
         args += ["--ro-bind", str(Path(path).resolve()), str(Path(path).resolve())]
     for path in rw:
         args += ["--bind", str(Path(path).resolve()), str(Path(path).resolve())]
-    args += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--setenv", "HOME", "/tmp"]
     if rw:
         args += ["--chdir", str(Path(rw[0]).resolve())]
     return args + ["--", *cmd]
