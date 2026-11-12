@@ -1,45 +1,54 @@
-# NixOS module: runs the research loop from a git checkout as drain-on-stop systemd services.
+# NixOS module: the research loop as drain-on-stop systemd services, one Unix user per role.
+#
+# Only `substrated` (user `substrate`) can open the event log and blobs (${dataDir}/substrate, mode
+# 0700). Every other role talks to it over /run/substrate/api.sock and is identified by its Unix user,
+# so the role on each event is attested by the OS, not claimed by the caller. Loop code runs from a git
+# checkout owned by `rl-deploy`; services run its virtualenv read-only.
 { pi, toolchain }:
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.research-loop;
   tc = toolchain pkgs pkgs.stdenv.hostPlatform.system;
   repo = "${cfg.dataDir}/repo";
-  root = "${cfg.dataDir}/substrate";
-  env = {
-    HOME = cfg.dataDir;
-    UV_CACHE_DIR = "${cfg.dataDir}/.cache/uv";
+  python = "${repo}/.venv/bin/python";
+  socket = "/run/substrate/api.sock";
+  target = "unix:${socket}";
+  uvEnv = {
+    HOME = "${cfg.dataDir}/cache";
+    UV_CACHE_DIR = "${cfg.dataDir}/cache/uv";
     UV_PYTHON = "${tc.python}/bin/python3.12";
     UV_PYTHON_DOWNLOADS = "never";
     LD_LIBRARY_PATH = tc.libraryPath;
   };
+  runEnv = { LD_LIBRARY_PATH = tc.libraryPath; PYTHONDONTWRITEBYTECODE = "1"; };
   gitSsh = lib.optionalString (cfg.repo.sshKeyFile != null)
     "export GIT_SSH_COMMAND='ssh -i ${cfg.repo.sshKeyFile} -o StrictHostKeyChecking=accept-new'";
-  common = {
-    path = tc.packages ++ [ pkgs.openssh pkgs.coreutils ];
-    environment = env;
-  };
-  longRunning = extra: {
-    User = "research-loop";
-    Group = "research-loop";
+  path = tc.packages ++ [ pkgs.openssh pkgs.coreutils ];
+  roleUnit = { user, writable, extra ? { } }: {
+    User = user;
+    Group = user;
+    SupplementaryGroups = [ "substrate-clients" ];
     WorkingDirectory = repo;
     KillSignal = "SIGTERM";
     KillMode = "mixed";       # SIGTERM only the main process so it can finish its job; children are left running
     Restart = "on-failure";
     RestartSec = 10;
     ProtectSystem = "strict";
-    ReadWritePaths = [ cfg.dataDir ];
+    ProtectHome = true;
+    ReadWritePaths = writable;
     PrivateTmp = true;
   } // extra;
   update = pkgs.writeShellScriptBin "research-loop-update" ''
     set -euo pipefail
-    sudo -u research-loop env ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "${k}=${v}") env)} \
-      PATH=${lib.makeBinPath tc.packages}:$PATH \
+    sudo -u rl-deploy env ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "${k}=${v}") uvEnv)} \
+      PATH=${lib.makeBinPath path}:$PATH ${lib.optionalString (cfg.repo.sshKeyFile != null)
+        "GIT_SSH_COMMAND='ssh -i ${cfg.repo.sshKeyFile}'"} \
       bash -c 'cd ${repo} && git pull --ff-only && uv sync --frozen'
     systemctl restart research-loop-verifier.service
     for i in $(seq 1 ${toString cfg.workers}); do
       systemctl restart "research-loop-worker@$i.service"   # each drains its current job first
     done
+    systemctl restart substrated.service                   # last: clients retry across the restart
   '';
 in {
   options.services.research-loop = {
@@ -47,8 +56,8 @@ in {
     repo.url = lib.mkOption { type = lib.types.str; description = "Git URL of this repository."; };
     repo.ref = lib.mkOption { type = lib.types.str; default = "main"; };
     repo.sshKeyFile = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null;
-      description = "Deploy key for a private repository (readable by research-loop)."; };
-    dataDir = lib.mkOption { type = lib.types.path; default = "/var/lib/research-loop"; };
+      description = "Deploy key for a private repository (readable by rl-deploy)."; };
+    dataDir = lib.mkOption { type = lib.types.str; default = "/var/lib/research-loop"; };
     workers = lib.mkOption { type = lib.types.ints.positive; default = 8; };
     model.baseUrl = lib.mkOption { type = lib.types.str; };
     model.name = lib.mkOption { type = lib.types.str; };
@@ -60,22 +69,37 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    users.groups.research-loop = { };
-    users.users.research-loop = { isSystemUser = true; group = "research-loop"; home = cfg.dataDir; createHome = true; };
+    users.groups = lib.genAttrs [ "substrate" "substrate-clients" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ] (_: { });
+    users.users = lib.genAttrs [ "substrate" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ]
+      (u: { isSystemUser = true; group = u; });
     programs.nix-ld.enable = true;
     environment.systemPackages = [ update ];
 
+    systemd.tmpfiles.rules = [
+      "d ${cfg.dataDir} 0755 root root -"
+      "d ${repo} 0755 rl-deploy rl-deploy -"
+      "d ${cfg.dataDir}/cache 0755 rl-deploy rl-deploy -"
+      "d ${cfg.dataDir}/substrate 0700 substrate substrate -"
+      "d ${cfg.dataDir}/work 0755 root root -"
+      "d ${cfg.dataDir}/work/verifier 0700 rl-verifier rl-verifier -"
+      "d ${cfg.dataDir}/work/workers 0700 rl-worker rl-worker -"
+      "d ${cfg.dataDir}/state 0700 rl-verifier rl-verifier -"
+    ];
+
     systemd.targets.research-loop = {
       wantedBy = [ "multi-user.target" ];
-      wants = [ "research-loop-verifier.service" ]
+      wants = [ "substrated.service" "research-loop-verifier.service" ]
         ++ map (i: "research-loop-worker@${toString i}.service") (lib.range 1 cfg.workers);
     };
 
-    systemd.services.research-loop-checkout = common // {
+    systemd.services.research-loop-checkout = {
       description = "Clone the research loop repository (only if absent)";
-      after = [ "network-online.target" ];
+      after = [ "network-online.target" "systemd-tmpfiles-setup.service" ];
       wants = [ "network-online.target" ];
-      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; User = "research-loop"; Group = "research-loop"; };
+      inherit path;
+      environment = uvEnv;
+      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; User = "rl-deploy"; Group = "rl-deploy";
+                        Restart = "on-failure"; RestartSec = 30; };
       script = ''
         ${gitSsh}
         if [ ! -d ${repo}/.git ]; then
@@ -85,48 +109,85 @@ in {
       '';
     };
 
-    systemd.services.research-loop-seed = common // {
-      description = "Seed the program pool (idempotent)";
+    # The only process that can open the event log and blobs.
+    systemd.services.substrated = {
+      description = "Substrate service (event log + blobs)";
       after = [ "research-loop-checkout.service" ];
       requires = [ "research-loop-checkout.service" ];
-      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; User = "research-loop"; Group = "research-loop";
-                        WorkingDirectory = repo; };
-      script = "uv run python -m loop.seed --root ${root}";
+      partOf = [ "research-loop.target" ];
+      environment = runEnv;
+      serviceConfig = {
+        User = "substrate";
+        Group = "substrate-clients";          # socket and runtime dir are group-accessible to roles
+        UMask = "0077";
+        RuntimeDirectory = "substrate";
+        RuntimeDirectoryMode = "0750";
+        WorkingDirectory = repo;
+        ExecStart = "${python} -m substrate.server --socket ${socket} --root ${cfg.dataDir}/substrate --policy ${repo}/loop/policy.json";
+        Restart = "on-failure";
+        RestartSec = 2;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ "${cfg.dataDir}/substrate" ];
+        PrivateTmp = true;
+      };
     };
 
-    systemd.services.research-loop-verifier = common // {
+    systemd.services.research-loop-seed = {
+      description = "Seed the program pool (idempotent)";
+      after = [ "substrated.service" ];
+      requires = [ "substrated.service" ];
+      environment = runEnv;
+      serviceConfig = roleUnit { user = "rl-seed"; writable = [ ]; extra = {
+        Type = "oneshot"; RemainAfterExit = true; Restart = "on-failure"; RestartSec = 10;
+        ExecStart = "${python} -m loop.seed --substrate ${target}"; }; };
+    };
+
+    # Exactly one verifier: nothing claims a program before verifying it, so a second one would
+    # double-score. TimeoutStopSec covers a full-check salt in progress; OOMPolicy=continue records an
+    # OOM-killed check as a failure instead of stopping the service.
+    systemd.services.research-loop-verifier = {
       description = "Research loop verifier";
       after = [ "research-loop-seed.service" ];
       requires = [ "research-loop-seed.service" ];
       partOf = [ "research-loop.target" ];
-      # exactly one verifier: nothing claims a program before verifying it, so a second one would double-score.
-      # TimeoutStopSec covers a full-check salt in progress; OOMPolicy=continue records an OOM-killed check
-      # as a failure instead of stopping the service.
-      serviceConfig = longRunning { MemoryMax = "8G"; TimeoutStopSec = 4 * 3600; OOMPolicy = "continue"; };
+      inherit path;
+      environment = runEnv;
+      serviceConfig = roleUnit {
+        user = "rl-verifier";
+        writable = [ "${cfg.dataDir}/work/verifier" "${cfg.dataDir}/state" ];
+        extra = { MemoryMax = "8G"; TimeoutStopSec = 4 * 3600; OOMPolicy = "continue"; };
+      };
       script = ''
-        exec uv run python -m loop.verifier --root ${root} --state ${cfg.dataDir}/state/verifier.cursor \
-          --workdir ${cfg.dataDir}/work/verifier --max-workers ${toString cfg.verifier.maxWorkers} \
+        exec ${python} -m loop.verifier --substrate ${target} --state ${cfg.dataDir}/state/verifier.cursor \
+          --workdir ${cfg.dataDir}/work/verifier/job --max-workers ${toString cfg.verifier.maxWorkers} \
           --salts ${lib.concatMapStringsSep " " toString cfg.verifier.salts}
       '';
     };
 
-    systemd.services."research-loop-worker@" = common // {
+    systemd.services."research-loop-worker@" = {
       description = "Research loop lab assistant %i";
       after = [ "research-loop-seed.service" ];
       requires = [ "research-loop-seed.service" ];
       partOf = [ "research-loop.target" ];
+      inherit path;
+      environment = runEnv // { HOME = "${cfg.dataDir}/work/workers"; };
       # stop timeout outlasts the pi job timeout (900 s) so a stopping worker always records its result
-      serviceConfig = longRunning ({ MemoryMax = "2G"; CPUQuota = "50%"; TimeoutStopSec = 1000; }
-        // lib.optionalAttrs (cfg.model.apiKeyFile != null) { LoadCredential = [ "apikey:${cfg.model.apiKeyFile}" ]; });
+      serviceConfig = roleUnit {
+        user = "rl-worker";
+        writable = [ "${cfg.dataDir}/work/workers" ];
+        extra = { MemoryMax = "2G"; CPUQuota = "50%"; TimeoutStopSec = 1000; }
+          // lib.optionalAttrs (cfg.model.apiKeyFile != null) { LoadCredential = [ "apikey:${cfg.model.apiKeyFile}" ]; };
+      };
       script = ''
         if [ -n "''${CREDENTIALS_DIRECTORY:-}" ] && [ -f "$CREDENTIALS_DIRECTORY/apikey" ]; then
           export RESEARCH_LOOP_API_KEY="$(cat "$CREDENTIALS_DIRECTORY/apikey")"
         else
           export RESEARCH_LOOP_API_KEY=none
         fi
-        exec uv run python -m loop.worker --root ${root} --id "$1" --base-url ${cfg.model.baseUrl} \
-          --model ${cfg.model.name} --api-key-env RESEARCH_LOOP_API_KEY \
-          --context-window ${toString cfg.model.contextWindow} --workroot ${cfg.dataDir}/work/worker-"$1"
+        exec ${python} -m loop.worker --substrate ${target} --id "$1" --base-url ${lib.escapeShellArg cfg.model.baseUrl} \
+          --model ${lib.escapeShellArg cfg.model.name} --api-key-env RESEARCH_LOOP_API_KEY \
+          --context-window ${toString cfg.model.contextWindow} --workroot ${cfg.dataDir}/work/workers/worker-"$1"
       '';
       scriptArgs = "%i";
     };
