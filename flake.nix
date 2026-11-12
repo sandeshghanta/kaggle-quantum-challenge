@@ -14,7 +14,7 @@
       toolchain = pkgs: system: {
         python = pkgs.python312;
         packages = [
-          pkgs.python312 pkgs.uv pkgs.nodejs_22 pkgs.git pkgs.gcc pkgs.pkg-config
+          pkgs.python312 pkgs.uv pkgs.nodejs_22 pkgs.git pkgs.gcc pkgs.pkg-config pkgs.bubblewrap
           pi.packages.${system}.default
         ];
         # manylinux wheels (numpy, kickmix on x86_64) need these on NixOS
