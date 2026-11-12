@@ -41,89 +41,59 @@ work to the cheapest resource that can do it.
 | Claude Opus on a $20 Pro plan | scarce: a 5-hour window plus a weekly cap | a few decisions a day: which ideas to pursue, what has been learned |
 | The human | scarcest | steering, and submitting to Kaggle |
 
-Consequences that shape everything below:
+Consequences that shape the research loop:
 
-- Judgement is never delegated to a model that can be wrong. A candidate counts only if the
-  verifier says so, and the verifier is exact.
-- The Claude budget is a hard stop, not a soft one. The loop uses at most 80% of either Pro plan
-  limit (the five-hour window or the weekly cap); the last 20% is kept as a backup.
-- Agents are not trusted with the record. Only one process, `substrated`, can touch the event log,
-  it knows which Unix user each caller is, and each role may write only the event types it needs.
-  Agent edits and generator builds run in a sandbox.
-- The loop is disposable; the event log is not. All durable state lives in the substrate, so the
-  loop can be rewritten without losing history.
+- **Volume beats precision.** Scoring is exact and free, so a cheap model's edit only has to be
+  right occasionally: the verifier finds the good ones. Nothing counts until it is verified.
+- **Strong-model time is the scarcest input.** Opus runs a few times a day, so it never does
+  individual experiments. It reads a prepared summary and decides direction: which lines of attack
+  get effort, what has been learned, what to try next.
+- **Many assistants must not duplicate each other.** Work is not assigned one by one; programs are
+  grouped into islands, and parent selection favours good programs that few others are already
+  working from.
+- **Full verification is expensive, so it is spent on contenders.** Cheap checks stop most bad
+  attempts in seconds; the full multi-salt check runs only on candidates that might beat their
+  island.
 
 ## Components
 
 ### Substrate
 
-The permanent layer under every loop: an append-only event log plus a content-addressed blob store.
-Loops, models and job types change; this does not. The contract is in
-[`substrate/SPEC.md`](substrate/SPEC.md).
+**Purpose.** The substrate is the system's memory: an append-only record of everything that
+happened (programs written, circuits measured, decisions taken, resources spent) plus the files those
+facts refer to. Every other part reads and writes only through it, and the research loop itself is
+treated as disposable: it can be rewritten, or replaced by a different design, and pick up from the
+same history. The contract is [`substrate/SPEC.md`](substrate/SPEC.md).
 
-- **Events** are an envelope (`v`, ULID `id`, `ts`, `type`, `type_v`, `subject`, `actor`, optional
-  `cause`) wrapping a type-specific payload. `type` is the verb, `subject` the noun
-  (`prog:sha256:...`, `bench:invsqrt`, `pool:qwen`), so `history(subject)` reads a row and filtering
-  by type reads a column.
-- **Every type is validated.** Each type-version has a JSON Schema in `substrate/schema/<type>/v<N>.json`
-  and a fixture. `append` rejects unknown types and non-conforming payloads, and nothing is written.
-  Schema descriptions are read by the models, so they are written as prompts.
-- **Storage** is SQLite (`events.sqlite`) with a `seq` autoincrement column as the cursor, and
-  blobs on disk by SHA-256, zstd-compressed, written by temp-file-and-rename.
-- **Read types** (`Candidate`, `Node`, `BudgetState`) are projections computed on every query and
-  never stored. A `Candidate` combines all measurements of one circuit under its latest verifier:
-  it passes only if every measurement passed, and its cost is the worst measurement, so a lucky
-  seed cannot flatter it.
-- **Invariants**, each with a test: append-only (no update or delete in the API), events stored as
-  written, status derived and never stored, validation enforced, jobs safe to kill, cursors never
-  skip.
+**Design.** It is event-sourced. Each fact is an immutable event; current state (the best circuit
+so far, an island's members, a program's lineage) is computed from events when asked, never stored
+and updated. An event is an *envelope* that every event shares (identity, time, type, the thing it
+is about, who wrote it, what prompted it) wrapping a type-specific *payload*.
 
-Event types:
+**Versioning.** Event shapes do evolve, so the design makes change safe rather than forbidding it:
 
-| Type | Meaning |
-|---|---|
-| `program.committed` | code that builds circuits exists (`blob`, `parent`, `note`) |
-| `candidate.measured` | a circuit got a full verification (cost, passes, shots, seeds, verifier, cost basis) |
-| `candidate.rejected` | an attempt stopped before a full verification, with a reason, a tier and, when known, a cost estimate |
-| `attempt.announced` | a lab assistant's one-line plan; also the unit of "children" for parent selection |
-| `island.created` / `island.updated` / `island.joined` | island lifecycle and membership |
-| `budget.spent` | tokens, CPU or wall time consumed from a pool (`qwen`, `cpu`, `claude`) |
-| `quota.observed`, `direction`, `lessons.published`, `question.asked`, `human.instructed`, `loop.config_changed` | written by the researcher and the admin chat |
-| `schema.registered` | a schema version came into use |
+- The envelope and each event type carry independent version numbers, so one type can change
+  without touching any other.
+- Every event type has a JSON Schema per version, and every write is validated against it; an
+  invalid or unknown event is rejected before anything is stored.
+- Nothing already written is ever rewritten. Readers convert old payloads to the current shape on
+  read (upcasters), ignore fields they do not know, and refuse versions newer than they understand
+  rather than guess.
+- A field whose meaning changes gets a new name, so old and new data can never be confused.
 
-### The substrate service (`substrated`)
+The full list of event types and their fields lives in [`substrate/schema/`](substrate/schema/).
 
-`substrated` is the only process that can open the event log and blobs. It runs as the `substrate`
-user, which owns the data directory (mode 0700), and serves the substrate API on a Unix socket,
-`/run/substrate/api.sock` (mode 0660, group `substrate-clients`). Every role user is in that group.
-Besides keeping one writer, this removes SQLite contention between the many processes.
+**Implementation.** Events live in a single SQLite database (WAL mode) whose commit-order sequence
+number is the cursor every consumer resumes from; updates and deletes are blocked by triggers.
+Programs and circuits are stored as files named by their SHA-256 hash, compressed with zstd. The
+query layer (best candidates, lineage, budget totals) is a set of read-only projections over the
+events.
 
-The protocol is JSON over HTTP/1.1: `POST /v1/<method>` with the method's keyword arguments, raw
-bodies for blobs, and errors mapped to HTTP statuses that the client re-raises as the substrate's own
-exceptions. Clients retry with backoff across a `substrated` restart, and bodies over 64 MB are
-refused.
-
-**Attestation.** Every role runs as its own Unix user (`rl-worker`, `rl-verifier`, `rl-seed`, and
-the researcher and admin users). For each request the server reads the caller's uid with
-`SO_PEERCRED`, maps uid to user name to role, and overwrites `actor.role` with that role. The client
-still supplies `model` and `harness`. A worker therefore cannot claim to be the verifier.
-
-**Policy.** `loop/policy.json` maps users to roles and lists what each role may append. Everyone may
-read. A constraint such as `{"pool": ["qwen"]}` requires that payload field to take one of the
-listed values. The substrate core stays role-agnostic: it exposes an `authorize` hook, and the policy
-is supplied by the service.
-
-| Role | May append |
-|---|---|
-| `worker` | `attempt.announced`; `program.committed`; `island.joined` with `via` = `submit`; `budget.spent` with `pool` = `qwen`; blobs |
-| `verifier` | `candidate.measured`; `candidate.rejected`; `budget.spent` with `pool` = `cpu`; blobs |
-| `seed` | `island.created`; `program.committed`; `island.joined` with `via` = `seed`; blobs |
-| `researcher` | `direction`, `lessons.published`, `question.asked`, `quota.observed`, `loop.config_changed`, island changes, Claude `budget.spent` |
-| `admin` | `human.instructed` |
-| `substrate` | `schema.registered`, written by the server itself |
-
-Loop entry points take `--substrate <target>`, a directory (in-process, for tests and single-user
-tools) or `unix:/run/substrate/api.sock`.
+**As a service.** In deployment the substrate runs as `substrated`, the only process allowed to open
+the database and files. Loop components call it over a local Unix socket. It identifies each caller
+by its Unix user rather than trusting what the caller claims, and a policy file
+(`loop/policy.json`) limits each role to the event types it needs: workers can submit programs but
+cannot record measurements, the verifier can record measurements but cannot submit programs.
 
 ### Sandboxing
 
