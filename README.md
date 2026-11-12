@@ -222,31 +222,6 @@ A Nix flake provides the toolchain, and a NixOS module defines the services and 
 users. The loop code runs from a git checkout, so a code update needs a pull and a restart, not a
 rebuild. See [`docs/deploy.md`](docs/deploy.md).
 
-## Key design decisions
-
-| Decision | Why | Trade-off |
-|---|---|---|
-| Event sourcing: an append-only, validated log is the truth | History is the research record; attribution, replay and new analyses need no migration; status derived from events cannot drift | Every read is a projection over events; no in-place correction, only a new event |
-| SQLite with `seq` cursors, behind one writer service | One file, transactional appends, no server database; `seq` is commit order, so cursors never skip even when ULIDs from concurrent writers commit out of order; a single writer avoids `Busy` contention | Single-host; all access goes through `substrated` |
-| `substrated` is the only process that can touch the log | Agents run model-written code, so they must not be able to write the log or blobs directly; the data directory is owned by the `substrate` user (0700) | A service to run, and clients must tolerate its restarts (they retry with backoff) |
-| OS-level attestation by Unix user (`SO_PEERCRED`) | The server stamps `actor.role` from the caller's uid, so a role cannot be forged from inside a payload | Needs one Unix user per role; Linux only (macOS dev runs unattested) |
-| Per-role write policy in `loop/policy.json` | Each role may append only the event types and field values it needs, so a compromised worker cannot write `candidate.measured` or spend from the wrong pool | The policy must grow with each new role; the substrate core stays role-agnostic |
-| bubblewrap sandboxes for pi and `gen.py` builds | pi has no sandbox of its own; confining writes to the job directory and hiding the socket (and, for builds, the network) limits what bad model output can do | `bwrap` is required on Linux; macOS runs unsandboxed with a warning |
-| The loop uses at most 80% of either Pro plan limit | Plan usage is only visible with a response, so the researcher gates each visit on its last observation; the final 20% is a backup | Fewer researcher visits than the plan could allow |
-| Envelope `v` plus per-type `type_v`, with upcasters | The envelope almost never changes; payloads evolve independently. Readers upcast to the latest shape, so projections know only one version, and the stored bytes never change | Each breaking payload change needs an upcaster and a fixture |
-| Every event type validated by a schema | Models write events; a bad write must fail loudly at the boundary, not corrupt later projections. Descriptions double as prompts | Adding a type means adding a schema and fixture first |
-| No central orchestrator: independent, drain-on-stop services | Each service is restartable alone and the substrate is the only coupling; a crash loses at most one job | Coordination rules must be expressible through events (children counts, cursors) |
-| Parent selection without task assignment | The `1/(1 + children)` discount on announced work spreads concurrent workers with no scheduler and no lock | Spreading is statistical, not exact |
-| Full-domain sweep, then the full check only if it could win | The full check is ~200M shots per salt; the one-shot sweep covers every x for about 28 CPU-s, catching broken circuits (including large-x bugs) and giving a cost estimate to gate on | A 5% margin lets near-ties through, and a seeded 5% audit of gate rejections checks the gate is not discarding winners |
-| Full check stops at the first failing salt | A failing circuit is dead; the remaining salts would only spend CPU | A failure report names one salt, not all that would fail |
-| Identical circuits rejected before checking | The verifier is deterministic given circuit and salt; repeating it adds nothing | Hash equality catches only exact copies, not near-duplicates |
-| pi for every agent; pi-claude-bridge for the Claude subscription | One harness and one JSONL event format for Qwen and Opus; Anthropic documents Agent SDK use as drawing from subscription limits, and the bridge uses that official path rather than reusing OAuth tokens | Unattended use is a grey area in the consumer terms, mitigated by a few calls a day |
-| Nix flake provides toolchain and services; loop code runs from a git checkout | Reproducible Python, Node, pi and systemd units, while a code update is `git pull` plus `uv sync` with no rebuild | Two update paths: flake changes need `nixos-rebuild`, loop code does not |
-| `KillMode=mixed` with long `TimeoutStopSec` | systemd sends SIGTERM to the main process only; workers and the verifier finish the current job and record it before exiting | A stop can take up to a job's length (15 minutes for workers, 4 hours for the verifier) |
-| The verifier runs exactly once per program, as a single instance | Nothing claims a program before verifying it, so concurrent verifiers would duplicate work and double-count spend | Verification throughput is bounded by one service; it uses many cores per check |
-| Islands live in the loop, not the substrate | The substrate stays generic (`frontier`, `lineage`, `history`); islands can change freely | Each loop re-derives island state from events |
-| Versioned roles, actions and brief sections | A new behaviour is a new role version plus registered parts and, if it writes new data, one schema; results are attributable per version | More directories and conventions than one script would need |
-
 ## Repository layout
 
 | Path | Contents |
