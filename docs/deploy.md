@@ -36,6 +36,7 @@ services.research-loop = {
   repo.url = "https://github.com/sandeshghanta/kaggle-quantum-challenge.git";
   repo.ref = "main";
   workers = 8;                       # Spark's sweet spot: 8 concurrent requests
+  viewers = [ "sandeshg" ];          # your own user may read the substrate (read-only)
   model.baseUrl = "http://spark-9a7e.stalk-rudd.ts.net:8000/v1";
   model.name = "nvidia/Qwen3.8-Flash-Next-FP4-Local";
   model.contextWindow = 32768;

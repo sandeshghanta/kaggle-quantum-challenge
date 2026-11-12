@@ -78,6 +78,8 @@ in {
     model.contextWindow = lib.mkOption { type = lib.types.int; default = 32768; };
     verifier.maxWorkers = lib.mkOption { type = lib.types.int; default = 12; };
     verifier.salts = lib.mkOption { type = lib.types.listOf lib.types.int; default = [ 1 2 3 4 ]; };
+    viewers = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ];
+      description = "Existing local users allowed to read (never write) the substrate as role viewer, e.g. [ \"alice\" ]."; };
     statusPage.enable = lib.mkOption { type = lib.types.bool; default = true;
       description = "Run the live updater and the local status page server."; };
     statusPage.port = lib.mkOption { type = lib.types.port; default = 8080;
@@ -93,8 +95,11 @@ in {
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [ {
+    # people who may read the substrate: role "viewer" via group substrate-viewers (loop/policy.json)
+    users.users = lib.genAttrs cfg.viewers (_: { extraGroups = [ "substrate-viewers" "substrate-clients" ]; });
+  } {
     users.groups = lib.genAttrs [ "substrate" "substrate-clients" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed"
-                                  "rl-live" "rl-status" "status-readers" ] (_: { });
+                                  "rl-live" "rl-status" "status-readers" "substrate-viewers" ] (_: { });
     # live updater: read-only substrate client (role "live" in policy.json); status page: reads files only
     users.users = lib.genAttrs [ "substrate" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ]
       (u: { isSystemUser = true; group = u; }

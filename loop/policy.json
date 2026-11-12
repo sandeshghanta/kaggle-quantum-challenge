@@ -1,13 +1,15 @@
 {
-  "_comment": "Which Unix user is which role, and what each role may append. Everyone may read. A constraint {field: [values]} requires payload[field] to be one of the values. 'blob' allows put_blob.",
+  "_comment": "Which Unix user is which role, and what each role may append. Everyone may read. A constraint {field: [values]} requires payload[field] to be one of the values. 'blob' allows put_blob. 'groups' maps Unix groups to roles for callers whose user name is not listed (e.g. people added to substrate-viewers by the deployment).",
   "users": {
     "rl-worker": "worker",
     "rl-verifier": "verifier",
     "rl-seed": "seed",
     "rl-live": "live",
     "substrate": "substrate",
-    "rl-researcher": "researcher",
-    "sandeshg": "viewer"
+    "rl-researcher": "researcher"
+  },
+  "groups": {
+    "substrate-viewers": "viewer"
   },
   "roles": {
     "worker": {

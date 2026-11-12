@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import grp
 import json
 import os
 import pwd
@@ -47,6 +48,21 @@ def peer_uid(sock: socket.socket) -> int | None:
     return None
 
 
+def group_lookup(user: str) -> list[str]:
+    """Names of every group the user belongs to (primary and supplementary)."""
+    try:
+        gids = os.getgrouplist(user, pwd.getpwnam(user).pw_gid)
+    except KeyError:
+        return []
+    names = []
+    for gid in gids:
+        try:
+            names.append(grp.getgrgid(gid).gr_name)
+        except KeyError:
+            pass
+    return names
+
+
 def pwd_lookup(uid: int) -> str | None:
     try:
         return pwd.getpwuid(uid).pw_name
@@ -71,7 +87,7 @@ class _Server(socketserver.ThreadingUnixStreamServer):
     allow_reuse_address = True
 
 
-def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_lookup,
+def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_lookup, user_groups=group_lookup,
                 max_body: int = 64 << 20) -> _Server:
     sub = Substrate(root, authorize=policy.authorize if policy else None)
     sub.init()
@@ -105,7 +121,7 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
                 return True, None
             uid = peer_uid(self.connection)
             user = uid_to_user(uid) if uid is not None else None
-            role = policy.role_for_user(user) if user else None
+            role = policy.role_for(user, user_groups(user) if user else []) if user else None
             return role is not None, role
 
         def _discard_small_body(self) -> None:
