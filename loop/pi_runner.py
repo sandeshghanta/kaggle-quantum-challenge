@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,10 +19,10 @@ PROVIDER = "qwen"
 
 
 def write_agent_dir(dest: Path, *, base_url: str, model: str, api_key_env: str,
-                    context_window: int, max_tokens: int) -> Path:
+                    context_window: int, max_tokens: int, provider: str = PROVIDER) -> Path:
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    models = {"providers": {PROVIDER: {
+    models = {"providers": {provider: {
         "baseUrl": base_url, "api": "openai-completions", "apiKey": f"${api_key_env}",
         "models": [{"id": model, "contextWindow": context_window, "maxTokens": max_tokens,
                     "compat": {"thinkingFormat": "qwen"}}],
@@ -50,15 +51,22 @@ def _text(message: dict) -> str:
 
 
 def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, tools: list[str],
-           model: str, timeout_s: float) -> PiRun:
+           model: str, timeout_s: float, provider: str = PROVIDER, sandboxed: bool = True,
+           on_event: Callable[[dict], None] | None = None) -> PiRun:
+    """Run pi once. `provider` selects the model provider in the agent dir (default: the Qwen endpoint).
+
+    `sandboxed=False` skips bubblewrap; only for the researcher, which has no tools and needs the
+    user's Claude login in HOME. `on_event` sees every JSON event pi prints (e.g. to read rate-limit info).
+    """
     cmd = ["pi", "--mode", "json", "--no-session", "--no-approve", "-nc",
-           "--provider", PROVIDER, "--model", f"{PROVIDER}/{model}",
+           "--provider", provider, "--model", f"{provider}/{model}",
            *(["--tools", ",".join(tools)] if tools else ["-nt"]),
            "--append-system-prompt", str(system_append), prompt]
     env = os.environ | {"PI_CODING_AGENT_DIR": str(agent_dir)}
     pi_bin = shutil.which("pi")
     ro = [Path(system_append).resolve().parent] + ([Path(pi_bin).resolve().parent.parent] if pi_bin else [])
-    cmd = sandbox.wrap(cmd, rw=[Path(workdir), Path(agent_dir)], ro=ro, network=True, cwd=Path(workdir))
+    if sandboxed:
+        cmd = sandbox.wrap(cmd, rw=[Path(workdir), Path(agent_dir)], ro=ro, network=True, cwd=Path(workdir))
     start = time.monotonic()
     proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True)
@@ -88,6 +96,8 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
                     ev = json.loads(line.rstrip(b"\r"))
                 except ValueError:
                     continue
+                if on_event is not None:
+                    on_event(ev)
                 if ev.get("usage"):
                     usage = ev["usage"]
                 if ev.get("type") == "message_end" and ev.get("message", {}).get("role") == "assistant":
