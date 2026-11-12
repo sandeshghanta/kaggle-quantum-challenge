@@ -54,7 +54,9 @@ def run_once(sub: Substrate, *, state_path: Path, workdir: Path, salts: list[int
         try:
             evaluate(sub, program, island_best_sweep=island_best_sweep(sub, program), salts=salts,
                      max_workers=max_workers, workdir=workdir, cause=ev.id, full_max_x=full_max_x,
-                     delta=delta, audit_rate=audit_rate, rng=rng)
+                     delta=delta, audit_rate=audit_rate, rng=rng, stop=stop)
+        except verify.Interrupted:
+            return done  # stopping: nothing recorded and the cursor stays before this program, so it is redone
         except Exception as e:  # never loop on one program: record it and move on
             sub.append("candidate.rejected", {"program": program, "reason": "verify_error", "tier": "verify",
                                               "detail": f"{type(e).__name__}: {e}"[-4000:]},
@@ -85,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     def on_term(signum, frame):
         nonlocal stopping
         stopping = True
-        print("verifier: stop requested; finishing current job", flush=True)
+        print("verifier: stop requested; abandoning the current check (it is redone after restart)", flush=True)
 
     signal.signal(signal.SIGTERM, on_term)
     sub = connect(args.substrate)
@@ -100,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             if stopping:
                 break
             time.sleep(0.1)
-    print("verifier: finished current job, exiting", flush=True)
+    print("verifier: exiting", flush=True)
     return 0
 
 

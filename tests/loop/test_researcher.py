@@ -87,6 +87,37 @@ def test_gate_treats_a_reset_window_as_fresh(sub, clock):
     assert researcher.gate(sub, now=clock.t)[0]
 
 
+def visited(sub):
+    sub.append("researcher.visited", {"trigger": "schedule", "digest": sub.put_blob(b"{}"), "model": "m"},
+               subject=researcher.SUBJECT, actor=h.RES)
+
+
+def test_gate_limits_blind_visits_when_quota_is_unreadable(sub, clock):
+    """No reading since the last visit: at most one visit per BLIND_INTERVAL, so a broken quota read can't overspend."""
+    visited(sub)
+    clock.advance(hours=1)
+    allowed, reason = researcher.gate(sub, now=clock.t)
+    assert not allowed and "usage reading" in reason
+    clock.advance(hours=4, minutes=1)
+    assert researcher.gate(sub, now=clock.t)[0]
+
+
+def test_gate_blind_limit_also_applies_after_a_stale_reading(sub, clock):
+    observe(sub, 10, 10)
+    clock.advance(minutes=1)
+    visited(sub)  # this visit produced no reading
+    clock.advance(hours=1)
+    assert not researcher.gate(sub, now=clock.t)[0]
+
+
+def test_gate_reading_from_the_last_visit_lifts_the_blind_limit(sub, clock):
+    visited(sub)
+    clock.advance(seconds=30)
+    observe(sub, 10, 10)
+    clock.advance(hours=1)
+    assert researcher.gate(sub, now=clock.t)[0]
+
+
 def test_gate_uses_the_latest_observation(sub, clock):
     observe(sub, 95, 95)
     observe(sub, 10, 10)
@@ -180,6 +211,7 @@ def count_visits(monkeypatch):
         calls.append((trigger, cause))
         vid = sub.append("researcher.visited", {"trigger": trigger, "digest": h.prog("d"), "model": "m"},
                          subject=h.BENCH, actor=h.RES, cause=cause)
+        observe(sub, 10, 10)  # a visit whose quota read worked
         return researcher.VisitResult(vid, [], None, None)
     monkeypatch.setattr(researcher, "run_visit", run_visit)
     return calls

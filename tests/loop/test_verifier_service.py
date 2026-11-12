@@ -86,3 +86,30 @@ def test_unexpected_error_is_recorded_and_skipped(tmp_path, sub, monkeypatch):  
     reasons = {e.payload["program"]: e.payload["reason"] for e in rejected(sub)}
     assert reasons == {a: "verify_error", b: "build_failed"}
     assert run_once(sub, tmp_path) == 0
+
+
+def test_interrupted_program_records_nothing_and_is_redone(tmp_path, sub, monkeypatch):  # review: drain between salts
+    a = commit(sub, tmp_path, BROKEN.format(n=1))
+    b = commit(sub, tmp_path, BROKEN.format(n=2))
+    real = verify.evaluate
+
+    def stop_on_b(s, program, **kw):
+        if program == b:
+            raise verify.Interrupted()
+        return real(s, program, **kw)
+
+    monkeypatch.setattr(verifier, "evaluate", stop_on_b)
+    assert run_once(sub, tmp_path) == 1
+    assert [e.payload["program"] for e in rejected(sub)] == [a]
+    monkeypatch.setattr(verifier, "evaluate", real)
+    assert run_once(sub, tmp_path) == 1
+    assert [e.payload["program"] for e in rejected(sub)] == [a, b]
+
+
+def test_stop_callable_reaches_evaluate(tmp_path, sub, monkeypatch):
+    commit(sub, tmp_path, BROKEN.format(n=1))
+    seen = {}
+    monkeypatch.setattr(verifier, "evaluate", lambda s, program, **kw: seen.update(kw))
+    verifier.run_once(sub, state_path=tmp_path / "cursor", workdir=tmp_path / "work", salts=[1],
+                      max_workers=None, stop=lambda: False)
+    assert callable(seen.get("stop"))

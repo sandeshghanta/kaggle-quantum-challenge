@@ -35,3 +35,14 @@ def test_setup_installs_claude_code_and_bridge_and_target_wants_researcher():
 def test_vm_config_disables_the_researcher():
     assert "researcher.enable = false" in VM
     assert "researcher.enable" in MODULE
+
+
+def test_update_does_not_block_on_draining_units():
+    upd = MODULE[MODULE.index('writeShellScriptBin "research-loop-update"'):MODULE.index("in {")]
+    restarts = [l for l in upd.splitlines() if "systemctl restart" in l]
+    assert restarts and all("--no-block" in l for l in restarts)
+
+
+def test_verifier_stops_quickly():
+    unit = MODULE[MODULE.index("systemd.services.research-loop-verifier = {"):]
+    assert "TimeoutStopSec = 60;" in unit[:unit.index("script =")]

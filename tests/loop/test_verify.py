@@ -1,3 +1,4 @@
+import subprocess
 import pytest
 
 from loop import config, verify
@@ -159,12 +160,62 @@ def test_audit_fully_checks_a_would_be_rejection(tmp_path, sub, ref_sweep_cost):
 def test_full_check_stops_at_first_failing_salt(tmp_path, sub, monkeypatch):
     real = verify._run_verifier
 
-    def fail_salt_1(kmb, extra, timeout):
+    def fail_salt_1(kmb, extra, timeout, stop=verify._never):
         if "--salt" in extra and extra[extra.index("--salt") + 1] == "1":
             return verify.CheckResult(False, None, {"seconds": 0.1}, 0, [], "phase error at x=7")
-        return real(kmb, extra, timeout)
+        return real(kmb, extra, timeout, stop)
 
     monkeypatch.setattr(verify, "_run_verifier", fail_salt_1)
     program, out = run(sub, tmp_path, REFERENCE, salts=[1, 2, 3])
     [m] = events(sub, program, "candidate.measured")
     assert m.payload["passes"] is False and m.payload["seeds"] == [1]
+
+
+# ── subprocess control (review: timeouts left pool children running; stops waited for a whole check) ──
+SPAWNS_CHILD = """
+import subprocess, sys, time, pathlib
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+pathlib.Path(sys.argv[1]).write_text(str(child.pid))
+time.sleep(60)
+"""
+
+
+def _alive(pid: int) -> bool:
+    import os
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _child_pid(path, deadline=10.0):
+    import time
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        if path.exists() and path.read_text():
+            return int(path.read_text())
+        time.sleep(0.05)
+    raise AssertionError("child never started")
+
+
+def test_timeout_kills_the_whole_process_group(tmp_path):
+    import sys, time
+    pidfile = tmp_path / "pid"
+    with pytest.raises(subprocess.TimeoutExpired):
+        verify._run([sys.executable, "-c", SPAWNS_CHILD, str(pidfile)], cwd=tmp_path, timeout=2)
+    pid = _child_pid(pidfile)
+    time.sleep(0.3)
+    assert not _alive(pid)
+
+
+def test_stop_request_kills_the_check_and_raises_interrupted(tmp_path):
+    import sys, time
+    pidfile = tmp_path / "pid"
+    t0 = time.monotonic()
+    with pytest.raises(verify.Interrupted):
+        verify._run([sys.executable, "-c", SPAWNS_CHILD, str(pidfile)], cwd=tmp_path, timeout=600,
+                    stop=lambda: pidfile.exists() and bool(pidfile.read_text()))
+    assert time.monotonic() - t0 < 10
+    time.sleep(0.3)
+    assert not _alive(_child_pid(pidfile))

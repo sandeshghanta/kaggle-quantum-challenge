@@ -9,7 +9,9 @@ salt, stopping at the first failing salt.
 from __future__ import annotations
 
 import json
+import os
 import random
+import signal
 import resource
 import shutil
 import subprocess
@@ -31,6 +33,39 @@ AUDIT_RATE = 0.05
 VERSION = "v1"
 
 
+class Interrupted(Exception):
+    """A stop was requested mid-check; the check was killed and nothing should be recorded."""
+
+
+def _never() -> bool:
+    return False
+
+
+def _run(cmd: list[str], *, cwd: Path, timeout: float, stop=_never) -> tuple[int, str, str]:
+    """Run a check in its own process group. On timeout (TimeoutExpired) or stop (Interrupted) kill the whole group,
+    including the verifier's ProcessPool workers, so nothing keeps burning CPU after we give up."""
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                out, err = proc.communicate(timeout=0.5)
+                return proc.returncode, out, err
+            except subprocess.TimeoutExpired:
+                if stop():
+                    raise Interrupted() from None
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(cmd, timeout) from None
+    finally:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)  # the group outlives the leader if it spawned workers
+        except (ProcessLookupError, PermissionError):
+            pass
+        if proc.returncode is None:
+            proc.communicate()
+
+
 @dataclass(frozen=True)
 class CheckResult:
     passes: bool
@@ -49,19 +84,19 @@ class Outcome:
     cost: float | None
 
 
-def _run_verifier(kmb: Path, extra: list[str], timeout: float) -> CheckResult:
+def _run_verifier(kmb: Path, extra: list[str], timeout: float, stop=_never) -> CheckResult:
     start = time.monotonic()
     try:
-        proc = subprocess.run([sys.executable, "-I", "invsqrt/verify_submission_invsqrt.py", str(kmb), *extra],
-                              cwd=config.VERIFIER_DIR, capture_output=True, text=True, timeout=timeout)
+        _, stdout, stderr = _run([sys.executable, "-I", "invsqrt/verify_submission_invsqrt.py", str(kmb), *extra],
+                                 cwd=config.VERIFIER_DIR, timeout=timeout, stop=stop)
     except subprocess.TimeoutExpired:
         return CheckResult(passes=False, cost=None, metrics={"seconds": round(time.monotonic() - start, 2)},
                            shots=0, seeds=[], error=f"verifier timed out after {timeout}s")
     elapsed = time.monotonic() - start
     try:
-        raw = json.loads(proc.stdout[proc.stdout.index("{"):])
+        raw = json.loads(stdout[stdout.index("{"):])
     except ValueError:
-        raw = {"status": "FAIL", "error": (proc.stderr or proc.stdout).strip()[-2000:]}
+        raw = {"status": "FAIL", "error": (stderr or stdout).strip()[-2000:]}
     ok = raw.get("status") == "PASS"
     metrics = {"seconds": round(elapsed, 2)}
     if "num_qubits" in raw:
@@ -76,18 +111,18 @@ def _workers(max_workers: int | None) -> list[str]:
     return ["--max-workers", str(max_workers)] if max_workers else []
 
 
-def sweep_check(kmb: Path, *, max_workers: int | None = None) -> CheckResult:
+def sweep_check(kmb: Path, *, max_workers: int | None = None, stop=_never) -> CheckResult:
     """Every x in the domain, one shot each: validates the whole domain and estimates the cost."""
     return _run_verifier(kmb, ["--shots-per-x", "1", "--batch-size", str(SWEEP_BATCH), *_workers(max_workers)],
-                         SWEEP_TIMEOUT)
+                         SWEEP_TIMEOUT, stop)
 
 
 def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
-               max_x: int | None = None) -> CheckResult:
+               max_x: int | None = None, stop=_never) -> CheckResult:
     extra = _workers(max_workers) + (["--max-x", str(max_x)] if max_x else [])
     results = []
     for s in salts:  # stop at the first failing salt: one failure already proves the circuit wrong
-        results.append(_run_verifier(kmb, ["--salt", str(s), *extra], FULL_TIMEOUT_PER_SALT))
+        results.append(_run_verifier(kmb, ["--salt", str(s), *extra], FULL_TIMEOUT_PER_SALT, stop))
         if not results[-1].passes:
             break
     passing = [r for r in results if r.passes]
@@ -106,7 +141,9 @@ def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
 
 def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, salts: list[int],
              max_workers: int | None, workdir: Path, cause: str, full_max_x: int | None = None,
-             delta: float = DELTA, audit_rate: float = AUDIT_RATE, rng: random.Random | None = None) -> Outcome:
+             delta: float = DELTA, audit_rate: float = AUDIT_RATE, rng: random.Random | None = None,
+             stop=_never) -> Outcome:
+    """Raises Interrupted, having recorded nothing, if `stop()` turns true while a check runs."""
     actor = config.actor("verifier", VERSION)
     subject = "prog:" + program
     cpu0 = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -141,7 +178,7 @@ def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, s
         if already is not None:
             return reject("duplicate", f"circuit identical to one already measured (program {already})",
                           "duplicate", circuit)
-        sweep = sweep_check(built.kmb, max_workers=max_workers)
+        sweep = sweep_check(built.kmb, max_workers=max_workers, stop=stop)
         worse = (island_best_sweep is not None and sweep.passes
                  and sweep.cost > island_best_sweep * (1 + delta))
         audited = worse and rng.random() < audit_rate
@@ -152,7 +189,7 @@ def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, s
                              f"sweep estimate {sweep.cost:.6g} > island best {island_best_sweep:.6g} x {1 + delta}",
                              "gate", circuit, sweep)
         else:
-            full = full_check(built.kmb, salts=salts, max_workers=max_workers, max_x=full_max_x)
+            full = full_check(built.kmb, salts=salts, max_workers=max_workers, max_x=full_max_x, stop=stop)
             cost = full.cost if full.cost is not None else sweep.cost
             metrics = full.metrics | {"sweep_cost": sweep.cost}
             if audited:

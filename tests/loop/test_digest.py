@@ -111,6 +111,13 @@ def test_hit_rate(sub, clock):
         "attempts": 4, "committed": 2, "passing": 1, "hit_rate": 0.25}
 
 
+def test_hit_rate_counts_server_stamped_worker_role(sub, clock):
+    """substrated stamps actor.role from the policy ("worker"), not the claimed "lab_assistant"."""
+    h.member(sub, "a", cost=100.0, actor={"role": "worker"})
+    h.attempt(sub, n=2)
+    assert digest.build_digest(sub, now=clock.t)["lab_assistants_24h"]["passing"] == 1
+
+
 def test_lessons_questions_and_instructions(sub, clock):
     d0 = digest.build_digest(sub, now=clock.t)
     assert d0["lessons"] is None and d0["human_instructions"] == [] and d0["last_visit"] is None

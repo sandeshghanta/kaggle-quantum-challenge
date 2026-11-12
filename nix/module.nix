@@ -54,13 +54,16 @@ let
       PATH=${lib.makeBinPath path}:$PATH ${lib.optionalString (cfg.repo.sshKeyFile != null)
         "GIT_SSH_COMMAND='ssh -i ${cfg.repo.sshKeyFile}'"} \
       bash -c 'cd ${repo} && git pull --ff-only && uv sync --frozen'
-    systemctl restart research-loop-verifier.service
-    ${lib.optionalString cfg.statusPage.enable "systemctl restart research-loop-live.service research-loop-statuspage.service"}
+    # --no-block: workers and the researcher drain their current job (up to ~15 min) before exiting;
+    # the update must not wait for each one in turn. Clients retry across the substrated restart.
+    systemctl restart --no-block research-loop-verifier.service   # abandons its check; redone after restart
+    ${lib.optionalString cfg.statusPage.enable "systemctl restart --no-block research-loop-live.service research-loop-statuspage.service"}
     for i in $(seq 1 ${toString cfg.workers}); do
-      systemctl restart "research-loop-worker@$i.service"   # each drains its current job first
+      systemctl restart --no-block "research-loop-worker@$i.service"
     done
-    ${lib.optionalString cfg.researcher.enable "systemctl restart research-loop-researcher.service   # drains the current visit first"}
-    systemctl restart substrated.service                   # last: clients retry across the restart
+    ${lib.optionalString cfg.researcher.enable "systemctl restart --no-block research-loop-researcher.service"}
+    systemctl restart --no-block substrated.service
+    echo "restarts queued; follow with: journalctl -fu 'research-loop-*'"
   '';
 in {
   options.services.research-loop = {
@@ -185,8 +188,8 @@ in {
     };
 
     # Exactly one verifier: nothing claims a program before verifying it, so a second one would
-    # double-score. TimeoutStopSec covers a full-check salt in progress; OOMPolicy=continue records an
-    # OOM-killed check as a failure instead of stopping the service.
+    # double-score. On stop it kills the running check's process group and exits without recording it
+    # (the program is redone after restart); OOMPolicy=continue records an OOM-killed check as a failure.
     systemd.services.research-loop-verifier = {
       description = "Research loop verifier";
       after = [ "research-loop-seed.service" ];
@@ -197,7 +200,7 @@ in {
       serviceConfig = roleUnit {
         user = "rl-verifier";
         writable = [ "${cfg.dataDir}/work/verifier" "${cfg.dataDir}/state" ];
-        extra = { MemoryMax = "8G"; TimeoutStopSec = 4 * 3600; OOMPolicy = "continue"; };
+        extra = { MemoryMax = "8G"; TimeoutStopSec = 60; OOMPolicy = "continue"; };
       };
       script = ''
         exec ${python} -m loop.verifier --substrate ${target} --state ${cfg.dataDir}/state/verifier.cursor \

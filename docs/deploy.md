@@ -87,7 +87,7 @@ Set `services.research-loop.researcher.enable = false` to run without it.
 |---|---|
 | Status | `systemctl status 'research-loop-*'` |
 | Logs | `journalctl -u research-loop-verifier -f`, `journalctl -u 'research-loop-worker@*' -f` |
-| Update loop code | `sudo research-loop-update` (pull + `uv sync`, then restarts the verifier and each worker; each finishes its current job first) |
+| Update loop code | `sudo research-loop-update` (pull + `uv sync`, then queues restarts of every service and returns at once; workers and the researcher finish their current job first, the verifier abandons its check and redoes it) |
 | Pause / resume | `sudo systemctl stop research-loop.target` / `start` |
 | Fewer workers now | `sudo systemctl stop research-loop-worker@8` (persist by changing `workers`) |
 | Query results | `sudo -u rl-verifier env PYTHONPATH=/var/lib/research-loop/repo /var/lib/research-loop/repo/.venv/bin/python -c "from substrate.client import RemoteSubstrate as R; print(R('/run/substrate/api.sock').frontier('invsqrt'))"` |

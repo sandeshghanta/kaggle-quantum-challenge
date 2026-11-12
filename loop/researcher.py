@@ -29,6 +29,7 @@ DEFAULT_ROLE_DIR = config.REPO / "roles" / "researcher" / "v1"
 SUBJECT = "bench:" + config.BENCHMARK
 POLL_S = 30
 FAILURE_COOLDOWN = timedelta(minutes=5)
+BLIND_INTERVAL = timedelta(hours=5)  # one plan window: the most often a visit may run without a usage reading
 
 
 @dataclass
@@ -56,11 +57,17 @@ class VisitResult:
 def gate(sub: Substrate, *, now: datetime, cap_pct: float = 80) -> tuple[bool, str]:
     """May a visit run? Both plan windows must be below `cap_pct` in the latest quota.observed.
 
-    A window whose reset time has passed counts as fresh; no observation yet means allowed.
+    A window whose reset time has passed counts as fresh. Readings come from visits, so when the last visit
+    produced none (or there has never been one) visits are "blind" and limited to one per BLIND_INTERVAL.
     """
     q = digest.latest_quota(sub)
+    last = digest.last_visit(sub)
+    if last is not None and (q is None or digest.parse_ts(q["t"]) < digest.parse_ts(last.ts)):
+        if now - digest.parse_ts(last.ts) < BLIND_INTERVAL:
+            return False, "no usage reading since the last visit; one visit per 5 h until there is one"
+        return True, "no usage reading; blind visit"
     if q is None:
-        return True, "no quota observation yet"
+        return True, "no visit yet"
     for name, pct, resets in (("five_hour", q["five_hour_pct"], q.get("five_hour_resets_at")),
                               ("seven_day", q["seven_day_pct"], q.get("seven_day_resets_at"))):
         if resets and digest.parse_ts(resets) <= now:

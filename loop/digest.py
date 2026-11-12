@@ -156,12 +156,16 @@ def _rejections(sub, now) -> dict:
     return {"by_reason": dict(Counter(ev.payload["reason"] for ev in recent)), "samples": samples}
 
 
+# Lab-assistant commits carry "lab_assistant" in-process and the policy role "worker" through substrated.
+LAB_ROLES = frozenset({"lab_assistant", "worker"})
+
+
 def hit_rate(sub: Substrate, now: datetime, meas: list[Measure], attempts: list) -> dict:
     """Programs committed by lab assistants in the last 24h that got a passing measurement, per attempt."""
     n_attempts = attempts_of(attempts, None, since=now - DAY)
     passing_programs = {m.program for m in meas}
     committed = [ev.payload["blob"] for ev in events(sub, "program.committed")
-                 if ev.actor.get("role") == "lab_assistant" and parse_ts(ev.ts) >= now - DAY]
+                 if ev.actor.get("role") in LAB_ROLES and parse_ts(ev.ts) >= now - DAY]
     passing = sum(1 for p in committed if p in passing_programs)
     return {"attempts": n_attempts, "committed": len(committed), "passing": passing,
             "hit_rate": round(passing / n_attempts, 4) if n_attempts else None}
