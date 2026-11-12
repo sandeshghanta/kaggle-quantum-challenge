@@ -24,6 +24,20 @@ let
   gitSsh = lib.optionalString (cfg.repo.sshKeyFile != null)
     "export GIT_SSH_COMMAND='ssh -i ${cfg.repo.sshKeyFile} -o StrictHostKeyChecking=accept-new'";
   path = tc.packages ++ [ pkgs.openssh pkgs.coreutils ];
+  roleUnit = { user, writable, extra ? { } }: {
+    User = user;
+    Group = user;
+    SupplementaryGroups = [ "substrate-clients" ];
+    WorkingDirectory = repo;
+    KillSignal = "SIGTERM";
+    KillMode = "mixed";       # SIGTERM only the main process so it can finish its job; children are left running
+    Restart = "on-failure";
+    RestartSec = 10;
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    ReadWritePaths = writable;
+    PrivateTmp = true;
+  } // extra;
   rhome = "${cfg.dataDir}/researcher";   # the researcher's persistent home: Claude login, npm prefix, pi agent dir
   statusDir = "${cfg.dataDir}/status/researcher";   # researcher.json; read by the status page (group status-readers)
   claudeBin = "${rhome}/npm/node_modules/.bin";
