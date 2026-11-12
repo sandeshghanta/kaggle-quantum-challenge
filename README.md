@@ -25,8 +25,8 @@ Five logical parts, each with one job:
 
 The researcher directs the lab assistants through the substrate, the verifier judges what they submit, and the human steers the researcher and reads its dashboard.
 
-There is no orchestrator process. Each part is an independent systemd service that coordinates with
-the others only by appending to and reading from the substrate, so any one can be restarted alone.
+The parts never call each other: they coordinate only by reading and writing the substrate, so
+there is no central orchestrator and each part can be stopped or replaced independently.
 
 ## Why this shape
 
@@ -83,34 +83,6 @@ is about, who wrote it, what prompted it) wrapping a type-specific *payload*.
 
 The full list of event types and their fields lives in [`substrate/schema/`](substrate/schema/).
 
-**Implementation.** Events live in a single SQLite database (WAL mode) whose commit-order sequence
-number is the cursor every consumer resumes from; updates and deletes are blocked by triggers.
-Programs and circuits are stored as files named by their SHA-256 hash, compressed with zstd. The
-query layer (best candidates, lineage, budget totals) is a set of read-only projections over the
-events.
-
-**As a service.** In deployment the substrate runs as `substrated`, the only process allowed to open
-the database and files. Loop components call it over a local Unix socket. It identifies each caller
-by its Unix user rather than trusting what the caller claims, and a policy file
-(`loop/policy.json`) limits each role to the event types it needs: workers can submit programs but
-cannot record measurements, the verifier can record measurements but cannot submit programs.
-
-### Sandboxing
-
-Models write the code that runs, so both places where model output executes are confined with
-bubblewrap (`bwrap`):
-
-- **pi jobs** see `/nix/store` and the repo read-only, can write only their own job directory under
-  the work root, and get a private `/tmp` and `HOME`. The network stays reachable (the model
-  endpoint), but `/run/substrate` is not mounted, so an agent cannot reach the socket. Its only
-  route to the log is the worker process that supervises it.
-- **`gen.py` builds** run the same way, except the only writable path is the build directory and
-  the network is unshared.
-
-On Linux, `bwrap` is required and startup fails if it is missing, rather than silently running
-unconfined. On macOS, where it does not exist, both run unsandboxed with a logged warning so that
-development and tests still work.
-
 ### Programs and candidates
 
 A **program** is a bundle: a directory with an entry script `gen.py <out.kmb>` plus any modules or
@@ -129,25 +101,17 @@ public generators, one approach per island.
 
 ### Lab assistants
 
-`loop.worker` is the lab assistant: Qwen driven by the pi coding-agent harness, N processes in
-parallel. One cycle:
+Lab assistants are many cheap agents (Qwen) working in parallel, each repeating one cycle:
 
-1. Pick an island by weight, then a parent within it (see islands below).
-2. Append `attempt.announced` with the island and a plan.
-3. Unpack the parent into a scratch directory and run one headless pi job in the sandbox (`--mode
-   json`, fresh process per job, no session) with read, edit, grep, find and ls tools and a capped
-   output budget. The brief is ordered stable-first (role prompt, island instructions, lessons
-   note) so the model server's prefix cache covers it.
-4. Record `budget.spent` for the Qwen tokens.
-5. If the bundle changed, store it as a blob and append `island.joined` then `program.committed`
-   (join first, so a crash leaves a placed-but-unjudged program, never an orphan).
-6. Repeat, with exponential backoff after repeated failures so a down endpoint does not cause a
-   hot loop.
+1. Choose an island and a parent program in it (see islands below).
+2. Announce what it is about to try, so the attempt is visible to others.
+3. Read a brief: the parent program, the island's instructions from the researcher, and the
+   lessons learned so far.
+4. Make one small, targeted change to the generator and submit the result as a new program.
 
-The role is a versioned package under `roles/lab_assistant/v1/` (system prompt, task template,
-island instructions, tool allowlist, timeouts). Every event an agent writes carries
-`actor.harness = "<role>/<version>@<git-sha>"`, so results are attributable to the exact behaviour
-that produced them.
+Every attempt is recorded, whether it changes anything or not, along with what it cost. An
+assistant's behaviour (its prompt, tools and limits) is a versioned role, and every event it writes
+names that version, so results can be attributed to the exact behaviour that produced them.
 
 ### Verifier
 
@@ -162,7 +126,7 @@ The pipeline is tiered so the expensive check runs only on candidates that might
 
 | Stage | Check | Outcome |
 |---|---|---|
-| Build | run `gen.py` in the sandbox with a timeout, in a fresh process | `build_failed` |
+| Build | run the generator in isolation, with a time limit | `build_failed` |
 | Novelty gate | reject a circuit identical (by hash) to one already measured | `duplicate` |
 | Sweep | every x in the domain, 1 shot each (about 28 CPU-s); validates the circuit and yields a cost estimate | `quick_check_failed` (tier `sweep`), or an estimate `{cost, Q, T}` |
 | Gate | reject as `not_better` only if the estimate is more than 5% worse than the island's best; a random 5% of such rejections go to the full check anyway | `not_better` |
@@ -257,6 +221,58 @@ the researcher publishes it as the artifact's data file, passed by path so a pub
 hundred tokens. The page therefore refreshes with each visit rather than live. If pi-claude-bridge
 does not expose Claude Code's Artifact tool, a small `claude -p` call after each visit does the
 publish.
+
+## Implementation
+
+### Storage
+
+Events live in a single SQLite database (WAL mode) whose commit-order sequence
+number is the cursor every consumer resumes from; updates and deletes are blocked by triggers.
+Programs and circuits are stored as files named by their SHA-256 hash, compressed with zstd. The
+query layer (best candidates, lineage, budget totals) is a set of read-only projections over the
+events.
+
+### The substrate service
+
+The substrate runs as `substrated`, the only process allowed to open
+the database and files. Loop components call it over a local Unix socket. It identifies each caller
+by its Unix user rather than trusting what the caller claims, and a policy file
+(`loop/policy.json`) limits each role to the event types it needs: workers can submit programs but
+cannot record measurements, the verifier can record measurements but cannot submit programs.
+
+### Sandboxing
+
+Models write the code that runs, so both places where model output executes are confined with
+bubblewrap (`bwrap`):
+
+- **pi jobs** see `/nix/store` and the repo read-only, can write only their own job directory under
+  the work root, and get a private `/tmp` and `HOME`. The network stays reachable (the model
+  endpoint), but `/run/substrate` is not mounted, so an agent cannot reach the socket. Its only
+  route to the log is the worker process that supervises it.
+- **`gen.py` builds** run the same way, except the only writable path is the build directory and
+  the network is unshared.
+
+On Linux, `bwrap` is required and startup fails if it is missing, rather than silently running
+unconfined. On macOS, where it does not exist, both run unsandboxed with a logged warning so that
+development and tests still work.
+
+### Agents
+
+Every agent runs in the pi coding-agent harness, headless, one fresh process per job. Lab assistants
+use a self-hosted Qwen endpoint with a read/edit/search tool allowlist and a capped output budget;
+their brief is ordered stable-first so the model server's prefix cache covers it. The researcher
+uses Claude Opus through pi-claude-bridge, which drives Claude Code via the official Agent SDK on the
+Pro plan. Workers back off exponentially after repeated failures so an unreachable endpoint never
+causes a hot loop.
+
+### Processes and deployment
+
+Each part of the loop is an independent systemd service: one `substrated`, N lab assistant workers,
+exactly one verifier, and the researcher service. There is no central orchestrator; services
+coordinate only through the substrate, and each finishes its current job before stopping, so any one
+can be restarted alone. A Nix flake provides the toolchain and a NixOS module defining the services,
+while the loop code runs from a git checkout, so code updates need a pull and a restart, not a
+rebuild. See [`docs/deploy.md`](docs/deploy.md).
 
 ## Key design decisions
 
