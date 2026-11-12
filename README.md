@@ -289,7 +289,7 @@ after each visit does the publish.
 | `tests/` | `substrate/` and `loop/` tests; `fakes/openai_server.py` is a fake model endpoint for smoke tests |
 | `flake.nix`, `nix/module.nix` | Dev shell and the `services.research-loop` NixOS module |
 | `nix/vm-test/` | A NixOS VM configuration used to prove the module end to end |
-| `docs/` | Design spec, implementation plans, deploy guide; `architecture.html` is the original proposal, superseded by the spec |
+| `docs/` | Design spec, implementation plans, deploy guide |
 
 ## Current status
 
@@ -390,4 +390,3 @@ flake input, the `services.research-loop` options, the operating commands, and t
   [substrated, sandbox and sweep tier](docs/superpowers/plans/2026-11-11-substrated-sandbox.md)
   (next, not built).
 - [Deploy guide](docs/deploy.md).
-- [`docs/architecture.html`](docs/architecture.html): the original architecture proposal (historical; superseded by the design spec).
