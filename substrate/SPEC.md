@@ -1,7 +1,7 @@
 # Substrate contract — v1
 
-The permanent layer under every research loop. Loops, models and job types churn;
-this does not.
+The permanent layer under every research loop. Loops, models and job types churn freely;
+the substrate changes only through versioned schemas, and nothing written to it is ever rewritten.
 
 **A loop may only reach the substrate through `cli.py`.** Nothing else writes
 events or blobs.
