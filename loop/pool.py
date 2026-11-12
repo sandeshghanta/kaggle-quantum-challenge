@@ -23,6 +23,15 @@ def islands(sub: Substrate) -> dict[str, dict]:
     return out
 
 
+def island_config_event(sub: Substrate, island: str) -> str | None:
+    """Id of the latest island.created / island.updated for this island (what attempts trace back to)."""
+    latest = None
+    for ev in sub.since(None, types=["island.created", "island.updated"], limit=-1)[0]:
+        if ev.payload["island"] == island:
+            latest = ev.id
+    return latest
+
+
 def members(sub: Substrate, island: str) -> list[str]:
     seen: dict[str, None] = {}
     for ev in sub.since(None, types=["island.joined"], limit=-1)[0]:

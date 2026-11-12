@@ -60,7 +60,7 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
     parent = pool.pick_parent(sub, island, rng)
     actor = config.actor("lab_assistant", role["version"], cfg.model)
     ann = sub.append("attempt.announced", {"island": island, "plan": "pending"},
-                     subject="prog:" + parent, actor=actor)
+                     subject="prog:" + parent, actor=actor, cause=pool.island_config_event(sub, island))
     job = Path(workroot) / ann
     try:
         bundle = job / "bundle"
