@@ -48,7 +48,10 @@ def reject(sub, prog, tier="sweep", reason="quick_check_failed", detail="first l
 
 def test_empty_substrate_has_all_keys(tmp_path):
     out = live.build_live(Substrate(tmp_path / "e"), heartbeats_dir=None, now=now())
-    assert set(out) == {"generated_at", "score", "history", "marks", "health", "workers", "activity"}
+    assert set(out) == {"generated_at", "score", "history", "marks", "health", "workers", "activity", "progress",
+                        "islands", "claude", "last_visit", "hardware", "alerts"}
+    assert out["progress"]["verdict"] is None and out["islands"] == [] and out["alerts"] == []
+    assert out["hardware"] is None and out["claude"] == {"points": [], "latest": None, "projected_week_pct": None}
     assert out["score"]["best_cost"] is None and out["score"]["reference_cost"] == 2076774
     assert out["score"]["public_best_ratio"] == 15.2 and out["score"]["top_ratio"] == 20.6
     assert out["history"] == [] and out["workers"] == [] and out["activity"] == []
@@ -206,3 +209,105 @@ def test_main_survives_a_failing_build(sub, tmp_path, monkeypatch):
         raise RuntimeError("boom")
     monkeypatch.setattr(live, "build_live", flaky)
     assert live.main(["--substrate", str(sub.root), "--out", str(out), "--once"]) == 0 and calls and not out.exists()
+
+
+
+# ── progress verdict ───────────────────────────────────────────────────
+def hist(*hours_ago, now_=None):
+    n = now_ or datetime(2026, 11, 11, 12, tzinfo=UTC)
+    return [{"t": live._iso(n - timedelta(hours=h)), "cost": 100 - i, "new": True} for i, h in enumerate(hours_ago)]
+
+
+@pytest.mark.parametrize("last_h,verdict", [(1, "improving"), (6, "improving"), (9, "slowing"), (24, "plateau")])
+def test_progress_verdict(last_h, verdict):
+    n = datetime(2026, 11, 11, 12, tzinfo=UTC)
+    p = live.progress(hist(48, last_h, now_=n), n)
+    assert p["verdict"] == verdict and len(p["per_day"]) == 7
+
+
+def test_progress_counts_improvements_per_day_excluding_the_seed():
+    n = datetime(2026, 11, 11, 12, tzinfo=UTC)
+    p = live.progress(hist(30, 2, 1, now_=n), n)  # seed yesterday, two gains today
+    assert [d["count"] for d in p["per_day"]][-2:] == [0, 2]
+
+
+def test_progress_from_build_live(sub):
+    a = commit(sub)
+    measure(sub, a, 1000)
+    out = live.build_live(sub, heartbeats_dir=None, now=now())
+    assert out["progress"]["verdict"] == "improving" and out["progress"]["last_gain"] is None  # only the first best
+
+
+# ── islands ────────────────────────────────────────────────────────────
+def test_island_effort_last_hour(sub):
+    for _ in range(3):
+        sub.append("attempt.announced", {"island": "main", "plan": "main: improving parent ab"},
+                   subject="prog:" + PARENT, actor=ACTOR)
+    a, b = commit(sub, "a"), commit(sub, "b")
+    measure(sub, a, 900)
+    reject(sub, b)
+    [row] = live.build_live(sub, heartbeats_dir=None, now=now())["islands"]
+    assert row == {"island": "main", "attempts_1h": 3, "judged_1h": 2, "pass_rate_1h": 0.5, "best_cost": 900}
+
+
+# ── Claude usage ───────────────────────────────────────────────────────
+def quota_at(t, five, seven, seven_reset):
+    return (t, {"five_hour_pct": five, "seven_day_pct": seven, "seven_day_resets_at": live._iso(seven_reset)})
+
+
+def test_claude_projection_needs_a_day_of_the_week():
+    n = datetime(2026, 11, 11, 12, tzinfo=UTC)
+    reset = n + timedelta(days=6, hours=12)  # 12 h into the week
+    assert live.claude_usage([quota_at(n, 10, 5, reset)], n)["projected_week_pct"] is None
+    reset = n + timedelta(days=3, hours=12)  # half way: 30% now -> 60% at reset
+    c = live.claude_usage([quota_at(n, 10, 30, reset)], n)
+    assert c["projected_week_pct"] == 60.0 and c["latest"]["seven_day_pct"] == 30 and len(c["points"]) == 1
+
+
+# ── alerts ─────────────────────────────────────────────────────────────
+class FakeMonitor(live.Monitor):
+    def __init__(self, *, down_since=None, disk=None, tps=None, cpu=None):
+        super().__init__()
+        self.qwen_down_since, self._disk, self._avg = down_since, disk, {"qwen_tps": tps, "cpu_pct": cpu}
+
+    def latest(self):
+        return {"disk_pct": self._disk}
+
+    def average(self, key, window, now):
+        return self._avg.get(key)
+
+
+OK_VERIFIER = {"backlog": 0, "oldest_wait_min": 0, "full_checks_24h": 0}
+N = datetime(2026, 11, 11, 12, tzinfo=UTC)
+
+
+def rules(**kw):
+    args = {"workers": [], "verifier": OK_VERIFIER, "last_visit": N, "claude": {}, "monitor": FakeMonitor(),
+            "now": N} | kw
+    return [a["rule"] for a in live.alerts(**args)]
+
+
+def test_no_alerts_when_all_is_well():
+    assert rules(monitor=FakeMonitor(disk=30, tps=140, cpu=85), claude={"projected_week_pct": 75}) == []
+
+
+def test_each_alert_rule_fires():
+    old = live._iso(N - timedelta(minutes=6))
+    assert rules(workers=[{"worker": 1, "updated_at": old}]) == ["worker_down"]
+    assert rules(workers=[{"worker": 1, "updated_at": live._iso(N - timedelta(minutes=3))}]) == []
+    assert rules(monitor=FakeMonitor(down_since=N - timedelta(minutes=3), tps=10)) == ["qwen_unreachable"]
+    assert rules(verifier={"backlog": 21, "oldest_wait_min": 5, "full_checks_24h": 0}) == ["verifier_stuck"]
+    assert rules(verifier={"backlog": 2, "oldest_wait_min": 31, "full_checks_24h": 0}) == ["verifier_stuck"]
+    assert rules(last_visit=N - timedelta(hours=3)) == ["researcher_stuck"]
+    assert rules(last_visit=N - timedelta(hours=3), claude={"latest": {"five_hour_pct": 85}}) == []  # capped: expected
+    assert rules(monitor=FakeMonitor(disk=90)) == ["disk_full"]
+    assert rules(monitor=FakeMonitor(tps=40)) == ["spark_underused"]
+    assert rules(monitor=FakeMonitor(cpu=30)) == ["devbox_underused"]
+    assert rules(claude={"projected_week_pct": 40}) == ["claude_underused"]
+
+
+def test_build_live_reports_hardware_and_alerts(sub, tmp_path):
+    m = FakeMonitor(cpu=20)
+    m.mem_total_gib = 25.0
+    out = live.build_live(sub, heartbeats_dir=None, now=now(), monitor=m)
+    assert out["hardware"]["mem_total_gib"] == 25.0 and "devbox_underused" in [a["rule"] for a in out["alerts"]]

@@ -1,6 +1,6 @@
-"""Local status page server: serves the dashboard and two JSON files, GET only, nothing else.
+"""Local status page server: serves the dashboard and three JSON files, GET only, nothing else.
 
-Exactly four URLs exist: /, /live.json, /researcher.json. Paths are matched, never joined onto a
+Exactly four URLs exist: /, /live.json, /history.json, /researcher.json. Paths are matched, never joined onto a
 directory, so there is nothing to traverse and no directory listing.
 """
 
@@ -18,9 +18,12 @@ from loop import config
 DEFAULT_INDEX = config.REPO / "dashboard" / "index.html"
 
 
-def make_server(host: str, port: int, *, index: Path, live: Path, researcher: Path) -> ThreadingHTTPServer:
+def make_server(host: str, port: int, *, index: Path, live: Path, researcher: Path,
+                history: Path | None = None) -> ThreadingHTTPServer:
+    history = Path(history) if history else Path(live).with_name("history.json")
     routes = {"/": (Path(index), "text/html; charset=utf-8"),
               "/live.json": (Path(live), "application/json"),
+              "/history.json": (history, "application/json"),
               "/researcher.json": (Path(researcher), "application/json")}
 
     class Handler(BaseHTTPRequestHandler):
@@ -74,6 +77,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--index", default=str(DEFAULT_INDEX))
     p.add_argument("--live", required=False, default="live.json", help="live.json written by loop.live")
+    p.add_argument("--history", help="history.json written by loop.live (default: next to live.json)")
     p.add_argument("--researcher", default="researcher.json", help="researcher.json written by the researcher")
     return p.parse_args(argv)
 
@@ -81,7 +85,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     srv = make_server(args.host, args.port, index=Path(args.index), live=Path(args.live),
-                      researcher=Path(args.researcher))
+                      researcher=Path(args.researcher), history=Path(args.history) if args.history else None)
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=srv.shutdown, daemon=True).start())
     print(f"statuspage: http://{args.host}:{srv.server_address[1]}/", flush=True)
     try:

@@ -46,3 +46,10 @@ def test_update_does_not_block_on_draining_units():
 def test_verifier_stops_quickly():
     unit = MODULE[MODULE.index("systemd.services.research-loop-verifier = {"):]
     assert "TimeoutStopSec = 60;" in unit[:unit.index("script =")]
+
+
+def test_live_updater_samples_hardware_and_writes_history():
+    unit = MODULE[MODULE.index("systemd.services.research-loop-live = "):]
+    unit = unit[:unit.index("systemd.services.research-loop-statuspage")]
+    for flag in ("--history ${status}/live/history.json", "--qwen-base-url", "--disk-path ${cfg.dataDir}"):
+        assert flag in unit

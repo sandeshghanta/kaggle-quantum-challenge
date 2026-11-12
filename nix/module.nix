@@ -209,7 +209,8 @@ in {
       '';
     };
 
-    # Live updater: plain code, writes live.json every 15 s. Read-only on the substrate (role "live").
+    # Live updater: plain code, writes live.json every 15 s and history.json (machine metrics) every 5 min.
+    # Read-only on the substrate (role "live"); samples /proc and Qwen's /metrics on the Spark.
     systemd.services.research-loop-live = lib.mkIf cfg.statusPage.enable {
       description = "Research loop live status updater";
       after = [ "research-loop-seed.service" ];
@@ -222,7 +223,8 @@ in {
         UMask = "0022";
         TimeoutStopSec = 30;                     # SIGTERM drains: it finishes the current tick and exits
         ExecStart = "${python} -m loop.live --substrate ${target} --heartbeats ${status}/workers "
-                    + "--out ${status}/live/live.json --interval-s 15"; }; };
+                    + "--out ${status}/live/live.json --history ${status}/live/history.json "
+                    + "--qwen-base-url ${lib.escapeShellArg cfg.model.baseUrl} --disk-path ${cfg.dataDir} --interval-s 15"; }; };
     };
 
     # Status page: serves the dashboard and two JSON files, GET only. Bound on all interfaces, but the

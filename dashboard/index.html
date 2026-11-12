@@ -1,127 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>invsqrt Research Loop</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: an instrument panel — score strip, cost trace, health row, then the researcher's notebook below. */
+/* One page, three files: live.json (every 15 s), history.json (machine metrics, every minute),
+   researcher.json (every minute). Phone: one column. Wide or tall screens: a two-column grid. */
 :root {
-  --bg: #f4f6f9; --surface: #ffffff; --ink: #14202e; --muted: #5a6a7d; --line: #d9e0e8;
-  --accent: #0f7c86; --accent-soft: #d6eef0; --good: #1f8a4c; --warn: #b7791f; --bad: #c0392b;
+  --bg: #f4f6f9; --surface: #ffffff; --ink: #14202e; --muted: #5a6a7d; --line: #d9e0e8; --grid: #e8edf2;
+  --accent: #0f7c86; --accent-soft: #d6eef0; --claude: #7a4fd1; --good: #1f8a4c; --warn: #b7791f; --bad: #c0392b;
+  --good-soft: #e5f4ec; --warn-soft: #fbf1e0;
   --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   --body: "Inter", "Segoe UI", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0e151d; --surface: #151f2a; --ink: #e6edf4; --muted: #93a3b5; --line: #263443;
-  --accent: #3cc0c9; --accent-soft: #123a3e; --good: #4cc27f; --warn: #e2a64a; --bad: #ef6b5b; color-scheme: dark } }
+  --bg: #0e151d; --surface: #151f2a; --ink: #e6edf4; --muted: #93a3b5; --line: #263443; --grid: #1e2a36;
+  --accent: #3cc0c9; --accent-soft: #123a3e; --claude: #a98bf0; --good: #4cc27f; --warn: #e2a64a; --bad: #ef6b5b;
+  --good-soft: #13301f; --warn-soft: #33270f; color-scheme: dark } }
 :root[data-theme="dark"] {
-  --bg: #0e151d; --surface: #151f2a; --ink: #e6edf4; --muted: #93a3b5; --line: #263443;
-  --accent: #3cc0c9; --accent-soft: #123a3e; --good: #4cc27f; --warn: #e2a64a; --bad: #ef6b5b; color-scheme: dark }
-body { background: var(--bg); color: var(--ink); font-family: var(--body); line-height: 1.5; }
-.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 56px;
+  --bg: #0e151d; --surface: #151f2a; --ink: #e6edf4; --muted: #93a3b5; --line: #263443; --grid: #1e2a36;
+  --accent: #3cc0c9; --accent-soft: #123a3e; --claude: #a98bf0; --good: #4cc27f; --warn: #e2a64a; --bad: #ef6b5b;
+  --good-soft: #13301f; --warn-soft: #33270f; color-scheme: dark }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-block: 14px 40px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  display: grid; gap: 22px; }
-h1, h2 { font-family: var(--display); margin: 0; text-wrap: balance; }
-h1 { font-size: 1.6rem; font-weight: 700; }
-h2 { font-size: .78rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
-.stamp { font-family: var(--mono); font-size: .8rem; color: var(--muted); }
-.banner { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 14px; font-size: .9rem; }
+  display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.col { display: grid; gap: 12px; align-content: start; min-width: 0; }
+@media (min-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  .full { grid-column: 1 / -1; }
+  .col { gap: 14px; }
+}
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+h1 { font-family: var(--display); font-size: 1.15rem; margin: 0; }
+.stamp { font-family: var(--mono); font-size: .74rem; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.card h2 { margin: 0 0 8px; font-family: var(--display); font-size: .72rem; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.hero { font-family: var(--display); font-size: 2.6rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+@media (min-width: 900px) { .hero { font-size: 3.2rem; } }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pills { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.pill { display: inline-block; font-size: .72rem; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid currentColor; white-space: nowrap; }
+.good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); } .muted { color: var(--muted); }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 2px; }
-.kpi .label { font-size: .78rem; color: var(--muted); }
-.kpi .value { font-family: var(--display); font-size: 1.75rem; font-weight: 600; }
-.kpi .sub { font-size: .8rem; color: var(--muted); }
-.good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 12px; min-width: 0; }
-.chart-box { overflow-x: auto; }
-svg.chart { width: 100%; min-width: 520px; height: auto; display: block; }
-.row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-.meter { display: grid; grid-template-columns: 3.2rem 1fr 3rem; align-items: center; gap: 10px; font-size: .85rem; }
-.track { position: relative; height: 8px; background: var(--line); border-radius: 4px; }
-.fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }
-.cap { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--warn); }
-.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .88rem; margin: 0; }
-.facts dt { color: var(--muted); } .facts dd { margin: 0; text-align: right; }
-.direction blockquote { margin: 0; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; font-size: 1rem; }
-.direction p { margin: 0; font-size: .9rem; } .direction b { color: var(--muted); font-weight: 600; }
-.table-box { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-td.num, th.num { text-align: right; }
-.pill { display: inline-block; font-size: .74rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
-.beliefs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
-.beliefs ul { margin: 6px 0 0; padding-left: 18px; font-size: .9rem; display: grid; gap: 4px; }
-.beliefs h3 { margin: 0; font-size: .85rem; font-family: var(--display); }
-.q { font-size: .92rem; margin: 0; }
-.empty { color: var(--muted); font-size: .9rem; }
-tr.stale td { opacity: .5; }
-.pill.run { color: var(--accent); } .pill.idle { color: var(--muted); } .pill.stale { color: var(--warn); }
-.feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; font-size: .88rem; }
-.feed li { display: grid; grid-template-columns: 4.6rem 6.2rem 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
-.feed .t { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
+p { margin: 6px 0 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; font-size: .7rem; letter-spacing: 0; text-transform: none; border: 0; background: none;
+  color: var(--muted); padding: 3px 9px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.verdict { display: flex; gap: 8px; align-items: center; padding: 7px 10px; border-radius: 10px; margin-bottom: 8px;
+  font-size: .85rem; background: var(--warn-soft); }
+.verdict.ok { background: var(--good-soft); }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.sub { font-size: .72rem; color: var(--muted); margin-top: 6px; }
+.alerts div { padding: 3px 0; font-size: .88rem; }
+.hw { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 900px) { .hw { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.hw .lbl { font-size: .74rem; color: var(--muted); }
+.hw .val { font-weight: 600; font-size: .95rem; }
+.hw .val small { font-weight: 400; color: var(--muted); font-size: .72rem; }
+.hw svg { height: 40px; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: .72rem; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.quote { border-left: 3px solid var(--accent); padding: 2px 0 2px 9px; }
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li { display: grid; grid-template-columns: 3.4rem 1fr; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: .84rem; }
+.feed .t { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
 .feed .txt { min-width: 0; overflow-wrap: anywhere; }
-.stamps { display: flex; flex-wrap: wrap; gap: 4px 16px; }
-@media (max-width: 520px) { .feed li { grid-template-columns: 4rem 1fr; } .feed li .pill { grid-column: 2; justify-self: start; } .feed .txt { grid-column: 1 / -1; } }
-@media (prefers-reduced-motion: no-preference) { .fill { transition: width .4s ease; } }
+ul.lessons { margin: 4px 0 0; padding-left: 18px; font-size: .84rem; }
+.empty { color: var(--muted); font-size: .86rem; }
+.res { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .res { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .res .wide { grid-column: 1 / -1; } }
+.res h3 { margin: 0 0 4px; font-size: .74rem; font-weight: 600; color: var(--muted); }
+.res .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.res .facts div { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.res .facts b { display: block; font-size: 1rem; font-variant-numeric: tabular-nums; }
+.res .facts small { color: var(--muted); font-size: .72rem; }
+.tbl { overflow-x: auto; }
+.tbl table { min-width: 560px; }
+.qbox { background: var(--warn-soft); border-radius: 8px; padding: 8px 10px; }
+.banner { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; font-size: .85rem; }
 </style>
-
+</head>
+<body>
 <div class="wrap">
-  <header>
+  <header class="full">
     <h1>invsqrt research loop</h1>
-    <span class="stamps"><span class="stamp" id="stamp-live">live: loading</span>
-      <span class="stamp" id="stamp-res">researcher: loading</span></span>
+    <span class="stamp" id="stamp">loading</span>
   </header>
-  <div class="banner" id="banner" hidden></div>
+  <div class="banner full" id="banner" hidden>Example data.</div>
 
-  <section class="kpis" id="kpis" aria-label="Where we stand"></section>
-
-  <section class="panel" aria-labelledby="h-work">
-    <h2 id="h-work">Lab assistants now</h2>
-    <div class="table-box"><table id="workers"></table></div>
+  <section class="card full" aria-labelledby="h-where">
+    <h2 id="h-where">Where we are</h2>
+    <div id="where"><p class="empty">Live updater not running.</p></div>
   </section>
 
-  <section class="panel" aria-labelledby="h-act">
-    <h2 id="h-act">Recent activity</h2>
-    <ul class="feed" id="activity"></ul>
+  <section class="card full" aria-labelledby="h-prog">
+    <h2 id="h-prog">Progress <span class="seg" data-range="progress">
+      <button aria-pressed="false" data-v="24">24 h</button><button aria-pressed="true" data-v="168">7 d</button><button aria-pressed="false" data-v="0">all</button></span></h2>
+    <div id="progress"></div>
   </section>
 
-  <section class="panel" aria-labelledby="h-trace">
-    <h2 id="h-trace">Best cost over time</h2>
-    <div class="chart-box" id="chart"></div>
+  <section class="card full" aria-labelledby="h-alerts">
+    <h2 id="h-alerts">Alerts</h2>
+    <div class="alerts" id="alerts"></div>
   </section>
 
-  <section class="row3" aria-label="Health">
-    <div class="panel"><h2>Researcher budget</h2><div id="budget"></div></div>
-    <div class="panel"><h2>Lab assistants</h2><dl class="facts" id="assistants"></dl></div>
-    <div class="panel"><h2>Verifier</h2><dl class="facts" id="verifier"></dl></div>
+  <section class="card full" aria-labelledby="h-hw">
+    <h2 id="h-hw">Hardware and Claude <span class="seg" data-range="hw">
+      <button aria-pressed="true" data-v="24">24 h</button><button aria-pressed="false" data-v="168">7 d</button></span></h2>
+    <div class="hw" id="hw"></div>
+    <div class="sub" id="hw-sub"></div>
   </section>
 
-  <section class="panel direction" aria-labelledby="h-dir">
-    <h2 id="h-dir">Current direction</h2>
-    <div id="direction"></div>
-  </section>
+  <div class="col">
+    <section class="card" aria-labelledby="h-isl">
+      <h2 id="h-isl">Effort by island, last hour</h2>
+      <div id="islands"></div>
+    </section>
+  </div>
 
-  <section class="panel" aria-labelledby="h-isl">
-    <h2 id="h-isl">Islands</h2>
-    <div class="table-box"><table id="islands"></table></div>
-  </section>
+  <div class="col">
+    <section class="card" aria-labelledby="h-act">
+      <h2 id="h-act">Recent activity</h2>
+      <ul class="feed" id="activity"></ul>
+    </section>
+  </div>
 
-  <section class="panel" aria-labelledby="h-log">
-    <h2 id="h-log">Decision log</h2>
-    <div class="table-box"><table id="decisions"></table></div>
-    <p class="empty" id="decision-summary"></p>
-  </section>
-
-  <section class="panel" aria-labelledby="h-bel">
-    <h2 id="h-bel">What the researcher believes</h2>
-    <div class="beliefs" id="beliefs"></div>
-  </section>
-
-  <section class="panel" aria-labelledby="h-q">
-    <h2 id="h-q">Questions for you</h2>
-    <div id="questions"></div>
+  <section class="card full" aria-labelledby="h-res">
+    <h2 id="h-res">Researcher <span class="stamp" id="res-stamp"></span></h2>
+    <div class="res" id="researcher"></div>
   </section>
 </div>
 
@@ -129,197 +145,226 @@ tr.stale td { opacity: .5; }
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = n => n == null ? "–" : Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-const ratio = (ref, cost) => cost ? ref / cost : null;
-const when = t => t ? new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "–";
-const pct = x => x == null ? "–" : (x * 100).toFixed(1) + "%";
-const outcomeClass = { met: "good", missed: "bad", open: "warn" };
-const callClass = { exploit: "good", "scale up": "good", restarted: "warn", stalled: "warn", retired: "bad", new: "", "long shot": "" };
-
-function kpis(s) {
-  if (!s) { $("kpis").innerHTML = `<p class="empty">Live updater not running. No score yet.</p>`; return; }
-  const sc = s.score, r = ratio(sc.reference_cost, sc.best_cost);
-  const vsPublic = r && sc.public_best_ratio ? (r / sc.public_best_ratio - 1) : null;
-  const vsTop = r && sc.top_ratio ? (r / sc.top_ratio - 1) : null;
-  const delta = r && sc.ratio_24h_ago ? r - sc.ratio_24h_ago : null;
-  const tile = (label, value, sub, cls = "") =>
-    `<div class="kpi"><span class="label">${label}</span><span class="value num ${cls}">${value}</span><span class="sub">${sub}</span></div>`;
-  $("kpis").innerHTML =
-    tile("Ratio vs reference", r ? r.toFixed(1) + "x" : "–",
-         delta == null ? "no change data yet" : `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} in 24 h`) +
-    tile("Best cost", fmt(sc.best_cost), `Q ${sc.Q ?? "–"} · Toffolis ${fmt(sc.T)}`) +
-    tile("vs public best", vsPublic == null ? "–" : `${vsPublic >= 0 ? "+" : ""}${(vsPublic * 100).toFixed(0)}%`,
-         `public ${sc.public_best_ratio ?? "–"}x`, vsPublic == null ? "" : vsPublic >= 0 ? "good" : "bad") +
-    tile("vs claimed top", vsTop == null ? "–" : `${vsTop >= 0 ? "+" : ""}${(vsTop * 100).toFixed(0)}%`,
-         `top ~${sc.top_ratio ?? "–"}x`, vsTop == null ? "" : vsTop >= 0 ? "good" : "warn");
-}
-
-function chart(s) {
-  if (!s) { $("chart").innerHTML = `<p class="empty">Live updater not running.</p>`; return; }
-  const pts = (s.history || []).filter(p => p.cost);
-  if (pts.length < 2) { $("chart").innerHTML = `<p class="empty">The trace appears after the first two measurements.</p>`; return; }
-  const W = 960, H = 260, L = 70, R = 20, T = 18, B = 34;
-  const xs = pts.map(p => Date.parse(p.t)), ys = pts.map(p => Math.log10(p.cost));
-  const x0 = Math.min(...xs), x1 = Math.max(...xs);
-  const lo = Math.min(...ys), hi = Math.max(...ys), pad = (hi - lo) * 0.15 || 0.05;
-  const y0 = lo - pad, y1 = hi + pad;
-  const X = t => L + (t - x0) / ((x1 - x0) || 1) * (W - L - R);
-  const Y = v => T + (y1 - v) / (y1 - y0) * (H - T - B);
-  const line = pts.map((p, i) => `${i ? "L" : "M"}${X(xs[i]).toFixed(1)},${Y(ys[i]).toFixed(1)}`).join(" ");
-  const area = `${line} L${X(x1).toFixed(1)},${H - B} L${X(x0).toFixed(1)},${H - B} Z`;
-  const ticks = [0, 0.5, 1].map(f => y0 + pad + f * (y1 - y0 - 2 * pad));
-  const grid = ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/>
-    <text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)" font-family="var(--mono)">${fmt(10 ** v)}</text>`).join("");
-  const marks = (s.marks || []).filter(m => { const t = Date.parse(m.t); return t >= x0 && t <= x1; }).map(m => {
-    const x = X(Date.parse(m.t));
-    return `<line x1="${x}" x2="${x}" y1="${T}" y2="${H - B}" stroke="var(--accent)" stroke-dasharray="3 4" opacity=".7"/>
-      <text x="${x + 4}" y="${T + 10}" font-size="11" fill="var(--accent)" font-family="var(--mono)">${esc(m.label)}</text>`; }).join("");
-  const last = pts.length - 1;
-  $("chart").innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Best cost over time, log scale">
-    ${grid}
-    <path d="${area}" fill="var(--accent)" opacity=".10"/>
-    <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
-    ${marks}
-    <circle cx="${X(xs[last])}" cy="${Y(ys[last])}" r="4.5" fill="var(--accent)"/>
-    <text x="${L}" y="${H - 10}" font-size="11" fill="var(--muted)">${esc(when(pts[0].t))}</text>
-    <text x="${W - R}" y="${H - 10}" font-size="11" fill="var(--muted)" text-anchor="end">${esc(when(pts[last].t))}</text>
-  </svg>`;
-}
-
-function health(live, res) {
-  const r = res && res.researcher;
-  const meter = (label, val) => `<div class="meter"><span>${label}</span>
-    <span class="track"><span class="fill" style="width:${Math.min(100, val ?? 0)}%"></span>${r.cap_pct != null ? `<span class="cap" style="left:${r.cap_pct}%"></span>` : ""}</span>
-    <span class="num">${val == null ? "–" : Math.round(val) + "%"}</span></div>`;
-  $("budget").innerHTML = r ? meter("5 h", r.five_hour_pct) + meter("7 d", r.seven_day_pct) +
-    `<dl class="facts"><dt>Cap</dt><dd class="num">${r.cap_pct ?? "–"}%</dd><dt>Visits, 24 h</dt><dd class="num">${r.visits_24h ?? "–"}</dd>
-     <dt>Last visit</dt><dd class="num">${esc(when(r.last_visit))}</dd>
-     <dt>Next visit</dt><dd class="num">${esc(when(r.next_visit))}</dd></dl>`
-    : `<p class="empty">No researcher visit yet.</p>`;
-  const none = `<p class="empty">Live updater not running.</p>`;
-  if (!live) { $("assistants").innerHTML = none; $("verifier").innerHTML = none; return; }
-  const a = live.health.assistants, v = live.health.verifier, sp = live.health.spend;
-  $("assistants").innerHTML = `<dt>Running</dt><dd class="num">${a.running ?? "–"}</dd>
-    <dt>Attempts, 24 h</dt><dd class="num">${fmt(a.attempts_24h)}</dd>
-    <dt>Hit rate</dt><dd class="num">${pct(a.hit_rate)}</dd>
-    <dt>Fail the sweep</dt><dd class="num">${pct(a.sweep_fail_rate)}</dd>
-    <dt>Qwen tokens out, 24 h</dt><dd class="num">${fmt(sp.qwen_tokens_out_24h)}</dd>`;
-  $("verifier").innerHTML = `<dt>Waiting</dt><dd class="num">${v.backlog ?? "–"}</dd>
-    <dt>Oldest wait</dt><dd class="num">${v.oldest_wait_min == null ? "–" : v.oldest_wait_min.toFixed(1) + " min"}</dd>
-    <dt>Full checks, 24 h</dt><dd class="num">${v.full_checks_24h ?? "–"}</dd>
-    <dt>CPU hours, 24 h</dt><dd class="num">${sp.cpu_seconds_24h == null ? "–" : (sp.cpu_seconds_24h / 3600).toFixed(1)}</dd>`;
-}
-
-const dur = sec => sec == null || sec < 0 ? "–" : sec < 90 ? Math.round(sec) + " s" : sec < 5400 ? Math.round(sec / 60) + " min" : (sec / 3600).toFixed(1) + " h";
+const short = n => n == null ? "–" : n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : fmt(n);
+const dur = sec => sec == null || sec < 0 ? "–" : sec < 90 ? Math.round(sec) + " s" : sec < 5400 ? Math.round(sec / 60) + " min"
+  : sec < 172800 ? (sec / 3600).toFixed(1).replace(/\.0$/, "") + " h" : (sec / 86400).toFixed(1).replace(/\.0$/, "") + " d";
 const ago = t => t ? dur((Date.now() - Date.parse(t)) / 1000) + " ago" : "never";
-const shortId = id => id ? String(id).replace(/^sha256:/, "").slice(0, 8) : "–";
+const until = t => t ? dur((Date.parse(t) - Date.now()) / 1000) : "–";
+const pctTxt = x => x == null ? "–" : Math.round(x) + "%";
+const LIVE_STALE_S = 60;
 
-function workers(live) {
-  if (!live) { $("workers").innerHTML = `<tbody><tr><td class="empty">Live updater not running.</td></tr></tbody>`; return; }
-  const rows = (live.workers || []).map(w => {
-    const thinking = w.state === "thinking" && !w.stale;
-    const pill = w.stale ? `<span class="pill stale">no heartbeat</span>`
-      : `<span class="pill ${thinking ? "run" : "idle"}">${esc(w.state)}</span>`;
-    const running = thinking && w.started_at ? dur((Date.now() - Date.parse(w.started_at)) / 1000) : "–";
-    return `<tr class="${w.stale ? "stale" : ""}"><td class="num">${esc(w.worker)}</td><td>${pill}</td><td>${esc(w.island ?? "–")}</td>
-      <td class="num">${esc(shortId(w.parent))}</td><td class="num">${running}</td><td class="num">${w.turns ?? "–"}</td>
-      <td>${esc(w.last_tool ?? "–")}</td><td class="num">${fmt(w.tokens_out)}</td></tr>`; }).join("");
-  $("workers").innerHTML = `<thead><tr><th class="num">Worker</th><th>State</th><th>Island</th><th class="num">Parent</th>
-    <th class="num">Running for</th><th class="num">Turns</th><th>Last tool</th><th class="num">Tokens out</th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="8" class="empty">No worker heartbeats yet.</td></tr>`}</tbody>`;
+const state = { live: null, hist: null, res: null, progressH: 168, hwH: 24 };
+
+// ── charts ─────────────────────────────────────────────────────────────
+// A line over [x0, x1]; null values break the line. opts: {lo, hi, color, ref: [{v, label}], step}
+function line(points, x0, x1, opts) {
+  const W = opts.w || 160, H = opts.h || 40, pad = 2;
+  const vals = points.map(p => p[1]).filter(v => v != null);
+  if (!vals.length) return `<svg viewBox="0 0 ${W} ${H}"><text x="0" y="${H / 2 + 4}" font-size="10" fill="var(--muted)">no data yet</text></svg>`;
+  const refs = (opts.ref || []).map(r => r.v);
+  let lo = opts.lo ?? Math.min(...vals, ...refs), hi = opts.hi ?? Math.max(...vals, ...refs);
+  if (hi === lo) { hi += 1; lo -= 1; }
+  const X = t => (t - x0) / ((x1 - x0) || 1) * W, Y = v => pad + (hi - v) / (hi - lo) * (H - 2 * pad);
+  let d = "", prev = null;
+  for (const [t, v] of points) {
+    if (v == null) { prev = null; continue; }
+    if (prev == null) d += `M${X(t).toFixed(1)},${Y(v).toFixed(1)}`;
+    else d += (opts.step ? `H${X(t).toFixed(1)}V${Y(v).toFixed(1)}` : `L${X(t).toFixed(1)},${Y(v).toFixed(1)}`);
+    prev = v;
+  }
+  const refLines = (opts.ref || []).map(r => `<line x1="0" x2="${W}" y1="${Y(r.v)}" y2="${Y(r.v)}" stroke="${r.color || "var(--warn)"}" stroke-dasharray="3 3"/>`
+    + (r.label ? `<text x="4" y="${Y(r.v) - 4}" font-size="10" fill="var(--muted)">${esc(r.label)}</text>` : "")).join("");
+  const axis = opts.axis ? [lo, (lo + hi) / 2, hi].map(v => `<line x1="0" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/>
+    <text x="-4" y="${Y(v) + 3}" text-anchor="end" font-size="10" fill="var(--muted)">${esc(opts.axis(v))}</text>`).join("") : "";
+  const last = points.filter(p => p[1] != null).pop();
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label || "chart")}">${axis}${refLines}
+    <path d="${d}" fill="none" stroke="${opts.color || "var(--accent)"}" stroke-width="${opts.width || 2}" stroke-linejoin="round"/>
+    ${opts.dot && last ? `<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="3.5" fill="${opts.color || "var(--accent)"}"/>` : ""}</svg>`;
 }
 
-const kindClass = { "new best": "good", committed: "run", rejected: "bad", measured: "", direction: "warn", lessons: "warn" };
-function activity(live) {
-  if (!live) { $("activity").innerHTML = `<li><span class="empty">Live updater not running.</span></li>`; return; }
-  const rows = (live.activity || []).map(a => `<li><span class="t">${esc(new Date(a.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }))}</span>
-    <span><span class="pill ${kindClass[a.kind] ?? ""}">${esc(a.kind)}</span></span><span class="txt">${esc(a.text)}</span></li>`).join("");
+// ── blocks ─────────────────────────────────────────────────────────────
+const VERDICT = { improving: ["Improving", "good"], slowing: ["Slowing", "warn"], plateau: ["Plateau", "bad"] };
+
+function liveFresh() { return state.live && (Date.now() - Date.parse(state.live.generated_at)) / 1000 < LIVE_STALE_S; }
+
+function where() {
+  const L = state.live, R = state.res;
+  if (!L) { $("where").innerHTML = `<p class="empty">Live updater not running.</p>`; return; }
+  const sc = L.score, r = sc.best_cost ? sc.reference_cost / sc.best_cost : null;
+  const v = VERDICT[L.progress && L.progress.verdict];
+  const vsPub = r && sc.public_best_ratio ? r / sc.public_best_ratio - 1 : null;
+  const dir = R && R.current_direction;
+  const nextVisit = R && R.researcher && R.researcher.next_visit;
+  $("where").innerHTML = `<div class="row" style="align-items:flex-end">
+      <span class="hero">${r ? r.toFixed(1) + "×" : "–"}</span>
+      <span class="pills">${liveFresh() ? `<span class="pill good">Running</span>` : `<span class="pill bad">Live data stale</span>`}
+        ${v ? `<span class="pill ${v[1]}">${v[0]}${L.progress.since_hours != null ? ` · last gain ${dur(L.progress.since_hours * 3600)} ago` : ""}</span>` : ""}</span></div>
+    <p>Best circuit costs <span class="num">${fmt(sc.best_cost)}</span> (Q ${sc.Q ?? "–"}, Toffolis ${fmt(sc.T)})${vsPub == null ? "" :
+      `, ${vsPub >= 0 ? `${(vsPub * 100).toFixed(0)}% above` : `${(-vsPub * 100).toFixed(0)}% below`} the public best of ${sc.public_best_ratio}×`}.
+      ${dir ? `Researcher: “${esc(dir.brief)}”` : "No researcher direction yet."}
+      ${nextVisit ? ` Next visit in ${until(nextVisit)}.` : ""}</p>`;
+}
+
+function progressBlock() {
+  const L = state.live;
+  if (!L) { $("progress").innerHTML = `<p class="empty">Live updater not running.</p>`; return; }
+  const sc = L.score, P = L.progress || {};
+  const pts = (L.history || []).filter(p => p.cost).map(p => [Date.parse(p.t), sc.reference_cost / p.cost]);
+  const v = VERDICT[P.verdict];
+  const days = (P.per_day || []).map(d => d.count);
+  const verdict = v ? `<div class="verdict ${P.verdict === "improving" ? "ok" : ""}"><span class="pill ${v[1]}">${v[0]}</span>
+    <span>${P.last_gain ? `Last gain ${ago(P.last_gain)}.` : "No gain over the seed yet."} Gains per day, last 3 days: ${days.slice(-3).join(", ") || "–"}.</span></div>` : "";
+  if (pts.length < 2) { $("progress").innerHTML = verdict + `<p class="empty">The chart appears after the first two measurements.</p>`; return; }
+  const now = Date.now(), x1 = Math.max(now, pts[pts.length - 1][0]);
+  const x0 = state.progressH ? x1 - state.progressH * 3600e3 : pts[0][0];
+  const inRange = pts.filter(p => p[0] >= x0), before = pts.filter(p => p[0] < x0).pop();
+  const series = (before ? [[x0, before[1]]] : []).concat(inRange).concat([[x1, (inRange.length ? inRange : [before])[(inRange.length || 1) - 1][1]]]);
+  const W = Math.max(260, $("progress").clientWidth - 40), H = W > 700 ? 220 : 170;
+  const chart = line(series, x0, x1, { w: W, h: H, step: true, dot: true, width: 2.4, label: "Best ratio over time",
+    ref: sc.public_best_ratio ? [{ v: sc.public_best_ratio, label: `public ${sc.public_best_ratio}×`, color: "var(--muted)" }] : [],
+    axis: v => v.toFixed(1) + "×" });
+  const maxD = Math.max(1, ...days);
+  const bars = days.map((c, i) => `<rect x="${i * (W / 7) + 4}" y="${34 - c / maxD * 30}" width="${W / 7 - 8}" height="${Math.max(1, c / maxD * 30)}"
+    fill="${i >= 5 && c < days[Math.max(0, i - 1)] ? "var(--warn)" : "var(--accent)"}"><title>${c} on ${esc(P.per_day[i].day)}</title></rect>
+    <text x="${i * (W / 7) + W / 14}" y="46" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(P.per_day[i].day.slice(5))}</text>`).join("");
+  $("progress").innerHTML = verdict + `<div style="padding-left:40px">${chart}</div>
+    <div class="sub">Improvements per day</div><div style="padding-left:40px"><svg viewBox="0 0 ${W} 48">${bars}</svg></div>`;
+}
+
+function alertsBlock() {
+  const L = state.live;
+  if (!L) { $("alerts").innerHTML = `<div class="bad">● Live updater not running</div>`; return; }
+  const a = L.alerts || [];
+  $("alerts").innerHTML = (liveFresh() ? "" : `<div class="bad">● Live data is ${ago(L.generated_at)} old</div>`) +
+    (a.length ? a.map(x => `<div class="warn">● ${esc(x.text)}</div>`).join("") : `<div class="good">● All clear</div>`);
+}
+
+function hwBlock() {
+  const L = state.live, H = state.hist, now = Date.now() / 1000;
+  const x0 = now - state.hwH * 3600;
+  const cur = (L && L.hardware && L.hardware.now) || {};
+  const memTotal = (L && L.hardware && L.hardware.mem_total_gib) || (H && H.mem_total_gib);
+  const ser = k => H ? H.t.map((t, i) => [t, H.series[k][i]]).filter(p => p[0] >= x0) : [];
+  const claudePts = k => ((L && L.claude && L.claude.points) || []).map(p => [Date.parse(p.t) / 1000, p[k]]).filter(p => p[0] >= x0);
+  const latest = (L && L.claude && L.claude.latest) || {};
+  const tile = (label, value, chart) => `<div><div class="lbl">${label}</div><div class="val">${value}</div>${chart}</div>`;
+  const opt = (o = {}) => ({ ...o });
+  $("hw").innerHTML =
+    tile("Devbox CPU", pctTxt(cur.cpu_pct), line(ser("cpu_pct"), x0, now, opt({ lo: 0, hi: 100, label: "Devbox CPU", ref: [{ v: 50 }] }))) +
+    tile("Devbox memory", cur.mem_used_gib == null ? "–" : `${cur.mem_used_gib.toFixed(1)} <small>/ ${memTotal ? memTotal.toFixed(0) : "?"} GiB</small>`,
+      line(ser("mem_used_gib"), x0, now, opt({ lo: 0, hi: memTotal || undefined, label: "Devbox memory" }))) +
+    tile("Disk", pctTxt(cur.disk_pct), line(ser("disk_pct"), x0, now, opt({ lo: 0, hi: 100, label: "Disk", ref: [{ v: 85 }] }))) +
+    tile("Qwen tokens/s", cur.qwen_tps == null ? "–" : fmt(cur.qwen_tps), line(ser("qwen_tps"), x0, now, opt({ lo: 0, label: "Qwen tokens per second", ref: [{ v: 70 }] }))) +
+    tile("Qwen requests", cur.qwen_running == null ? "–" : `${fmt(cur.qwen_running)} <small>running · ${fmt(cur.qwen_waiting)} queued</small>`,
+      line(ser("qwen_running"), x0, now, opt({ lo: 0, label: "Qwen requests running" }))) +
+    tile("Qwen KV cache", pctTxt(cur.qwen_cache_pct), line(ser("qwen_cache_pct"), x0, now, opt({ lo: 0, hi: 100, label: "Qwen KV cache" }))) +
+    tile("Claude 5 h window", `${pctTxt(latest.five_hour_pct)}${latest.five_hour_resets_at ? ` <small>resets in ${until(latest.five_hour_resets_at)}</small>` : ""}`,
+      line(claudePts("five_hour_pct"), x0, now, opt({ lo: 0, hi: 100, color: "var(--claude)", label: "Claude 5 hour usage", ref: [{ v: 80 }] }))) +
+    tile("Claude week", `${pctTxt(latest.seven_day_pct)}${latest.seven_day_resets_at ? ` <small>resets in ${until(latest.seven_day_resets_at)}</small>` : ""}`,
+      line(claudePts("seven_day_pct"), x0, now, opt({ lo: 0, hi: 100, color: "var(--claude)", label: "Claude weekly usage", ref: [{ v: 80 }] })));
+  const R = state.res && state.res.researcher;
+  const proj = L && L.claude && L.claude.projected_week_pct;
+  $("hw-sub").textContent = [
+    L && L.hardware && L.hardware.qwen_down_since ? `Qwen unreachable since ${ago(L.hardware.qwen_down_since)}` : null,
+    R ? `Claude: ${R.visits_24h ?? "–"} visits in 24 h` : null,
+    proj != null ? `on pace for ${Math.round(proj)}% of the week by reset` : null,
+    "dashed lines are alert thresholds"].filter(Boolean).join(" · ");
+}
+
+const CALL = { exploit: "good", boosted: "good", new: "", seed: "", retuned: "", throttled: "warn", restarted: "warn",
+  migrated: "warn", retired: "bad" };
+function islandsBlock() {
+  const L = state.live;
+  if (!L) { $("islands").innerHTML = `<p class="empty">Live updater not running.</p>`; return; }
+  const calls = Object.fromEntries(((state.res && state.res.islands) || []).map(i => [i.id, i.call]));
+  const rows = (L.islands || []).map(i => `<tr><td>${esc(i.island)} ${calls[i.island] ? `<span class="pill ${CALL[calls[i.island]] ?? ""}" style="font-size:.66rem">${esc(calls[i.island])}</span>` : ""}</td>
+    <td class="n">${fmt(i.attempts_1h)}</td><td class="n">${i.pass_rate_1h == null ? "–" : Math.round(i.pass_rate_1h * 100) + "%"}</td>
+    <td class="n">${short(i.best_cost)}</td></tr>`).join("");
+  $("islands").innerHTML = rows ? `<table><thead><tr><th>Island</th><th class="n">Attempts</th><th class="n">Pass</th><th class="n">Best</th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<p class="empty">No islands yet.</p>`;
+}
+
+const OUTCOME = { met: "good", missed: "bad", open: "warn" };
+function researcherBlock() {
+  const R = state.res;
+  $("res-stamp").textContent = R ? `view from ${ago(R.generated_at)}` : "";
+  if (!R) { $("researcher").innerHTML = `<p class="empty">No researcher visit yet. The first visit sets a direction.</p>`; return; }
+  const d = R.current_direction, ds = R.decision_summary || {}, q = R.questions || [], b = R.beliefs || {}, r = R.researcher || {};
+  const list = (items, cls) => (items && items.length) ? `<ul class="lessons">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`
+    : `<p class="empty">Nothing yet.</p>`;
+  const facts = `<div class="facts wide">
+      <div><small>Directions paid off</small><b>${ds.closed ? `${ds.paid_off} / ${ds.closed}` : "–"}</b></div>
+      <div><small>Opus tokens per improvement</small><b>${short(ds.tokens_per_improvement)}</b></div>
+      <div><small>Visits, 24 h</small><b>${r.visits_24h ?? "–"}</b></div>
+      <div><small>Last visit</small><b>${esc(ago(r.last_visit))}</b></div>
+      <div><small>Next visit</small><b>${r.next_visit ? "in " + esc(until(r.next_visit)) : "–"}</b></div>
+    </div>`;
+  const current = d ? `<div><h3>Current direction · ${esc(d.id)} · ${esc(ago(d.t))}</h3>
+      <div class="quote" style="font-size:1rem">${esc(d.brief)}</div>
+      <p style="font-size:.86rem"><span class="muted">Why:</span> ${esc(d.why)}</p>
+      <p style="font-size:.86rem"><span class="muted">Expect:</span> ${esc(d.prediction)} <span class="num muted">(${esc(d.progress)})</span></p>
+      ${d.explore_share != null ? `<p style="font-size:.86rem"><span class="muted">Effort split:</span> ${Math.round((1 - d.explore_share) * 100)}% on the best island, ${Math.round(d.explore_share * 100)}% exploring</p>` : ""}
+    </div>` : `<div><h3>Current direction</h3><p class="empty">No direction yet.</p></div>`;
+  const questions = `<div>${q.length ? `<div class="qbox"><h3 class="warn">Questions for you (${q.length})</h3>
+      <ul class="lessons">${q.map(x => `<li>${esc(x.text)} <span class="stamp">${esc(ago(x.t))}</span></li>`).join("")}</ul></div>`
+      : `<h3>Questions for you</h3><p class="empty">None open.</p>`}
+      <h3 style="margin-top:10px">Islands</h3>
+      ${(R.islands || []).length ? `<table><tbody>${R.islands.map(i => `<tr><td>${esc(i.id)}</td>
+        <td><span class="pill ${CALL[i.call] ?? ""}" style="font-size:.66rem">${esc(i.call)}</span></td>
+        <td class="muted" style="font-size:.8rem">${esc(i.idea)}</td>
+        <td class="n ${i.trend_pct < 0 ? "good" : ""}">${i.trend_pct == null ? "–" : (i.trend_pct > 0 ? "+" : "") + i.trend_pct.toFixed(1) + "%"}</td></tr>`).join("")}</tbody></table>
+        <p class="sub">Last column: change in island best cost over 24 h.</p>` : `<p class="empty">No islands yet.</p>`}
+    </div>`;
+  const log = `<div class="wide"><h3>Decision log</h3>${(R.decisions || []).length ? `<div class="tbl"><table>
+      <thead><tr><th>#</th><th>When</th><th>Direction</th><th>Prediction</th><th>Outcome</th><th class="n">Opus tokens</th></tr></thead>
+      <tbody>${R.decisions.slice(0, 10).map(x => `<tr><td class="num">${esc(x.id)}</td><td class="num" style="white-space:nowrap">${esc(ago(x.t))}</td>
+        <td>${esc(x.brief)}</td><td class="muted" style="font-size:.8rem">${esc(x.prediction)}</td>
+        <td><span class="pill ${OUTCOME[x.outcome] ?? ""}">${esc(x.outcome)}</span> <span class="muted" style="font-size:.78rem">${esc(x.detail)}</span></td>
+        <td class="n">${short(x.tokens)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="empty">No decisions yet.</p>`}</div>`;
+  const beliefs = `<div class="wide"><h3>What the researcher believes</h3><div class="res" style="gap:10px">
+      <div><span class="good" style="font-size:.8rem;font-weight:600">Working</span>${list(b.working)}</div>
+      <div><span class="bad" style="font-size:.8rem;font-weight:600">Not working</span>${list(b.not_working)}</div>
+      <div class="wide"><span class="warn" style="font-size:.8rem;font-weight:600">Open questions</span>${list(b.open_questions)}</div></div></div>`;
+  $("researcher").innerHTML = facts + current + questions + log + beliefs;
+}
+
+const KIND = { "new best": ["★", "good"], rejected: ["✗", "bad"], direction: ["◆", ""], lessons: ["◇", ""], committed: ["·", "muted"], measured: ["·", ""] };
+function activityBlock() {
+  const L = state.live;
+  if (!L) { $("activity").innerHTML = `<li><span class="empty">Live updater not running.</span></li>`; return; }
+  const rows = (L.activity || []).filter(a => a.kind !== "committed").slice(0, 10).map(a => {
+    const [icon, cls] = KIND[a.kind] || ["·", ""];
+    return `<li><span class="t">${esc(ago(a.t).replace(" ago", ""))}</span><span class="txt ${cls}">${icon} ${esc(a.kind)}: ${esc(a.text)}</span></li>`; }).join("");
   $("activity").innerHTML = rows || `<li><span class="empty">Nothing has happened yet.</span></li>`;
 }
 
-function direction(s) {
-  const d = s && s.current_direction;
-  if (!d) { $("direction").innerHTML = `<p class="empty">No researcher visit yet. The first visit sets a direction.</p>`; return; }
-  $("direction").innerHTML = `<blockquote>${esc(d.brief)}</blockquote>
-    <p><b>Why</b> ${esc(d.why)}</p>
-    <p><b>Expect</b> ${esc(d.prediction)} <span class="num">(${esc(d.progress)})</span></p>
-    <p class="stamp">${esc(d.id)} · ${esc(when(d.t))}${d.explore_share != null ? ` · exploring ${Math.round(d.explore_share * 100)}%` : ""}</p>`;
-}
-
-function islands(s) {
-  const rows = ((s && s.islands) || []).map(i => `<tr><td class="num">${esc(i.id)}</td><td>${esc(i.idea)}</td>
-    <td class="num">${i.assistants ?? "–"}</td><td class="num">${fmt(i.best_cost)}</td>
-    <td class="num ${i.trend_pct < 0 ? "good" : ""}">${i.trend_pct == null ? "–" : (i.trend_pct > 0 ? "+" : "") + i.trend_pct.toFixed(1) + "%"}</td>
-    <td><span class="pill ${callClass[i.call] ?? ""}">${esc(i.call)}</span></td></tr>`).join("");
-  $("islands").innerHTML = `<thead><tr><th>Island</th><th>Idea</th><th class="num">Assistants</th><th class="num">Best cost</th>
-    <th class="num">Trend 24 h</th><th>Researcher's call</th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="empty">No islands yet.</td></tr>`}</tbody>`;
-}
-
-function decisions(s) {
-  const rows = ((s && s.decisions) || []).map(d => `<tr><td class="num">${esc(d.id)}</td><td class="num">${esc(when(d.t))}</td>
-    <td>${esc(d.brief)}</td><td>${esc(d.prediction)}</td>
-    <td><span class="pill ${outcomeClass[d.outcome] ?? ""}">${esc(d.outcome)}</span> ${esc(d.detail)}</td>
-    <td class="num">${fmt(d.tokens)}</td></tr>`).join("");
-  $("decisions").innerHTML = `<thead><tr><th>#</th><th>When</th><th>Direction</th><th>Prediction</th><th>Outcome</th><th class="num">Opus tokens</th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="6" class="empty">No decisions yet.</td></tr>`}</tbody>`;
-  const ds = s && s.decision_summary;
-  $("decision-summary").textContent = ds && ds.closed
-    ? `${ds.paid_off} of ${ds.closed} closed directions paid off · about ${fmt(ds.tokens_per_improvement)} Opus tokens per improvement`
-    : "";
-}
-
-function beliefs(s) {
-  const b = (s && s.beliefs) || {};
-  const list = (title, items, cls) => `<div><h3 class="${cls}">${title}</h3>${(items && items.length)
-    ? `<ul>${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="empty">Nothing yet.</p>`}</div>`;
-  $("beliefs").innerHTML = list("Working", b.working, "good") + list("Not working", b.not_working, "bad") + list("Open questions", b.open_questions, "warn");
-}
-
-function questions(s) {
-  const q = (s && s.questions) || [];
-  $("questions").innerHTML = q.length
-    ? q.map(x => `<p class="q">${esc(x.text)} <span class="stamp">· ${esc(when(x.t))}</span></p>`).join("") +
-      `<p class="empty">Answer through the admin chat.</p>`
-    : `<p class="empty">No open questions.</p>`;
-}
-
-const state = { live: null, res: null, liveAt: null, resAt: null };
-
-function stamps() {
-  const mk = (label, at, gen, missing, staleSec) => {
-    if (!at) return [missing, "warn"];
-    const age = (Date.now() - Date.parse(gen)) / 1000;
-    return [`${label} updated ${dur(age)} ago`, age > staleSec ? "warn" : ""];
-  };
-  const [lt, lc] = mk("live", state.live, state.live && state.live.generated_at, "live: no data", 60);
-  const [rt, rc] = mk("researcher", state.res, state.res && state.res.generated_at, "researcher: none yet", 1e9);
-  $("stamp-live").textContent = lt; $("stamp-live").className = "stamp " + lc;
-  $("stamp-res").textContent = rt; $("stamp-res").className = "stamp " + rc;
-}
-
 function render() {
-  const live = state.live, res = state.res;
-  const banner = $("banner");
-  const ex = [live, res].some(x => x && x.example === true);
-  banner.hidden = !ex;
-  banner.textContent = ex ? "Example data." : "";
-  kpis(live); workers(live); activity(live); chart(live); health(live, res);
-  direction(res); islands(res); decisions(res); beliefs(res); questions(res);
-  stamps();
+  $("banner").hidden = ![state.live, state.res].some(x => x && x.example === true);
+  where(); progressBlock(); alertsBlock(); hwBlock(); islandsBlock(); researcherBlock(); activityBlock();
+  $("stamp").textContent = state.live ? `updated ${ago(state.live.generated_at)}` : "live: no data";
 }
 
-async function load(name, key, atKey) {
+document.querySelectorAll(".seg").forEach(seg => seg.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  seg.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  state[seg.dataset.range === "progress" ? "progressH" : "hwH"] = Number(b.dataset.v);
+  render();
+}));
+
+async function load(name, key) {
   try {
     const r = await fetch(name, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     state[key] = await r.json();
-    state[atKey] = state[key] ? Date.now() : null;
   } catch (e) { state[key] = null; }
   render();
 }
-const loadLive = () => load("live.json", "live", "liveAt");
-const loadRes = () => load("researcher.json", "res", "resAt");
-loadLive(); loadRes();
-setInterval(loadLive, 15000);
-setInterval(loadRes, 60000);
-setInterval(() => { workers(state.live); stamps(); }, 1000);
+let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(render, 150); });
+load("live.json", "live"); load("history.json", "hist"); load("researcher.json", "res");
+setInterval(() => load("live.json", "live"), 15000);
+setInterval(() => load("history.json", "hist"), 60000);
+setInterval(() => load("researcher.json", "res"), 60000);
+setInterval(() => { $("stamp").textContent = state.live ? `updated ${ago(state.live.generated_at)}` : "live: no data"; }, 1000);
 </script>
+</body>
+</html>

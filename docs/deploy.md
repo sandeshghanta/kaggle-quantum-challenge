@@ -103,10 +103,13 @@ The page is served on the devbox itself, only to the tailnet. From any device on
     http://devbox:8080
 
 The module runs two small units under `research-loop.target`: `research-loop-live` (user `rl-live`)
-rewrites `live.json` every 15 s from the substrate and the worker heartbeats, and
+rewrites `live.json` every 15 s from the substrate, the worker heartbeats, the devbox's `/proc` and
+Qwen's `/metrics` (derived from `model.baseUrl`), keeps 7 days of 5-minute machine metrics in
+`history.json`, and
 `research-loop-statuspage` (user `rl-status`) serves the page. The page also reads
 `researcher.json`, written only by the researcher service; until the first researcher visit it shows
-"No researcher visit yet". The two files have separate writers and never touch each other's output.
+"No researcher visit yet". The live updater and the researcher have separate files and never touch
+each other's output.
 
 The port binds on all interfaces, but the firewall trusts only `tailscale0` and does not open it, so
 nothing outside the tailnet can reach it. Options:

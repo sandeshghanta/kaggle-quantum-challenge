@@ -52,6 +52,14 @@ def test_researcher_served_when_present(server):
     assert json.loads(get(srv, "/researcher.json")[3]) == {"r": 2}
 
 
+def test_history_served_from_next_to_live_json(server):
+    srv, tmp = server
+    assert get(srv, "/history.json")[0] == 404
+    (tmp / "pub" / "history.json").write_text('{"t": []}')
+    s, ct, _, body = get(srv, "/history.json")
+    assert s == 200 and ct.startswith("application/json") and json.loads(body) == {"t": []}
+
+
 def test_query_string_ignored(server):
     assert get(server[0], "/live.json?x=1")[0] == 200
 
@@ -86,8 +94,10 @@ def test_default_host_is_loopback():
     assert statuspage.parse_args([]).host == "127.0.0.1" and statuspage.parse_args([]).port == 8080
 
 
-def test_real_dashboard_reads_the_two_served_files():
+def test_real_dashboard_reads_the_three_served_files():
     html = statuspage.DEFAULT_INDEX.read_text()
-    assert '"live.json"' in html and '"researcher.json"' in html and "snapshot.json" not in html
-    for section in ("Lab assistants now", "Recent activity", "Live updater not running", "No researcher visit yet"):
+    assert '"live.json"' in html and '"researcher.json"' in html and '"history.json"' in html
+    assert "snapshot.json" not in html
+    for section in ("Where we are", "Progress", "Alerts", "Hardware", "Effort by island", "Researcher",
+                    "Recent activity", "Live updater not running"):
         assert section in html

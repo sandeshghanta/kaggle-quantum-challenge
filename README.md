@@ -11,22 +11,18 @@ leaderboard (about 20x). The human submits to Kaggle; the loop never does.
 
 ## The system at a glance
 
-Five logical parts, each with one job:
-
 | Part | Job |
 |---|---|
-| **Researcher** | A strong model (Claude Opus) that visits every 45 minutes (budget permitting), reads what happened, and sets direction: which ideas to pursue, what has been learned. |
-| **Lab assistants** | Many cheap agents (Qwen) that run experiments nonstop, following the researcher's directions: each one edits a circuit generator and submits it. |
-| **Verifier** | Exact, local scoring of every submission against the competition's own checker. Nothing counts until it says so. |
-| **Substrate** | The permanent record: an append-only, validated event log plus stored programs and circuits. Every other part reads and writes only through it. |
-| **Human** | Watches a progress dashboard, steers through an admin chat, and submits to Kaggle. |
+| **Researcher** | Claude Opus, every 45 minutes within budget: reads what happened, sets direction. |
+| **Lab assistants** | Qwen agents, nonstop: edit circuit generators and submit them. |
+| **Verifier** | Scores every submission exactly with the competition's own checker. |
+| **Substrate** | Append-only event log plus stored programs and circuits; the only channel between parts. |
+| **Status page** | Live view of progress, machines and the researcher's reasoning, over Tailscale. |
+| **Human** | Watches the status page, steers the researcher, submits to Kaggle. |
 
 ![Logical components of the research loop](docs/diagrams/system.svg)
 
-The researcher directs the lab assistants through the substrate, the verifier judges what they submit, and the human steers the researcher and reads its dashboard.
-
-The parts never call each other: they coordinate only by reading and writing the substrate, so
-there is no central orchestrator and each part can be stopped or replaced independently.
+Parts never call each other, so there is no orchestrator and any part can be stopped or replaced alone.
 
 ### Islands and parent selection
 
@@ -119,14 +115,27 @@ and asks the human to confirm; once confirmed, the message is recorded as an ins
 researcher visits immediately if the budget allows, or at its next scheduled visit otherwise. The
 strong model is used only after that explicit confirmation.
 
-### Progress dashboard
+### Status page
 
-A private page the researcher publishes, laid out as in
-[`docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html`](docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html)
-(the numbers in the mockup are invented). It shows where the score stands against the public best
-and the claimed top, best cost over time marked with each researcher direction, system health
-(budget, assistant hit rate, verifier queue), the island table, the decision log with predictions
-and outcomes, and open questions. It refreshes with each researcher visit rather than live.
+A local page on the devbox, reachable only over the tailnet and laid out for both a phone and a large
+screen. From the top:
+
+- **Where we are:** the best ratio against the reference, whether the loop is running, and the
+  researcher's current direction.
+- **Progress:** the best ratio over time, a plain-rule verdict (improving, slowing or plateau) and
+  improvements per day.
+- **Alerts:** threshold checks, shown only while their condition holds: a worker or Qwen down, the
+  verifier backed up, the researcher not visiting, a full disk, and the Spark, devbox CPU or Claude
+  plan going underused.
+- **Hardware and Claude:** devbox CPU, memory and disk, Qwen throughput, requests and cache, and
+  Claude plan usage, each with 24-hour or 7-day history.
+- **Effort by island** and **recent activity.**
+- **Researcher:** the current direction with its reasoning and prediction, the decision log with
+  outcomes, lessons, open questions and questions for the human.
+
+Two services feed it and never write each other's files. The live updater computes everything except
+the researcher's view from the substrate, the worker heartbeats and the machines; the researcher
+writes its own view after each visit. Hardware samples and alerts stay out of the substrate.
 
 ## Why this shape
 
