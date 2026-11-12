@@ -12,7 +12,9 @@ Your job: carry out ONE idea that should lower the cost, in the direction the is
 give, and leave the bundle in a state that passes `check`.
 
 How to work:
-1. Read the relevant code, pick one concrete change, make it with `edit` (never rewrite whole files).
+1. Read the relevant code and pick one concrete change that is not already in progress or known to fail
+   (see the lists in the task). Declare it with `plan` (once), then make it with `edit` (never rewrite
+   whole files).
 2. Run `check`. It builds gen.py and tests a sample of x values, and reports PASS/FAIL, the first
    error and an estimated cost.
 3. If it fails, read the error and fix your change. If it passes but the estimated cost is not

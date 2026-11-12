@@ -77,19 +77,23 @@ def test_check_extension_runs_the_sample_check_and_enforces_its_limit(tmp_path, 
     import sys
     from loop import config
     monkeypatch.setenv("FAKE_KEY", "k")
-    ext = config.REPO / "roles" / "lab_assistant" / "v2" / "check.ts"
+    ext = config.REPO / "roles" / "lab_assistant" / "v2" / "tools.ts"
     script = [{"tool_calls": [{"name": "check", "arguments": {}}]},
+              {"tool_calls": [{"name": "plan", "arguments": {"idea": "break it"}}]},
+              {"tool_calls": [{"name": "check", "arguments": {}}]},
               {"tool_calls": [{"name": "check", "arguments": {}}]}, {"text": "SUMMARY: checked"}]
     events = []
     with FakeOpenAI(script) as fake:
         work, agent, sysfile = setup(tmp_path, fake.base_url)
         (work / "gen.py").write_text("raise RuntimeError('boom in gen')\n")
-        r = run_pi(work, agent, prompt="Check.", system_append=sysfile, tools=["read", "check"], model="fake-model",
+        r = run_pi(work, agent, prompt="Check.", system_append=sysfile, tools=["read", "plan", "check"], model="fake-model",
                    timeout_s=120, extensions=[ext], extra_ro=[config.REPO],
                    extra_env={"LOOP_PYTHON": sys.executable, "LOOP_REPO": str(config.REPO), "LOOP_CHECK_MAX": "1"},
                    on_event=events.append)
     assert r.ok, r.error
     ends = [e for e in events if e.get("type") == "tool_execution_end" and e.get("toolName") == "check"]
     texts = [c["text"] for e in ends for c in e["result"]["content"]]
-    assert len(ends) == 2 and "BUILD FAILED" in texts[0] and "boom in gen" in texts[0]
-    assert "No checks left" in texts[1]
+    assert len(ends) == 3 and "before running `check`" in texts[0]
+    assert "BUILD FAILED" in texts[1] and "boom in gen" in texts[1] and "No checks left" in texts[2]
+    starts = [e for e in events if e.get("type") == "tool_execution_start" and e.get("toolName") == "plan"]
+    assert starts[0]["args"] == {"idea": "break it"}

@@ -222,7 +222,7 @@ def test_job_gets_the_check_tool_budget_and_recent_failures(sub, cfg, tmp_path, 
 
     monkeypatch.setattr(worker, "run_pi", run)
     worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
-    assert "check" in seen["tools"] and seen["extensions"][0].name == "check.ts"
+    assert "check" in seen["tools"] and seen["extensions"][0].name == "tools.ts"
     assert seen["extra_env"]["LOOP_CHECK_MAX"] == "8" and seen["max_output_tokens"] == 30000
     assert seen["timeout_s"] == 900
     assert "check_failed: freed q30 early -- x=7: scratch qubit q(30)" in seen["prompt"]
@@ -241,3 +241,67 @@ def test_recent_failures_lists_newest_first_and_only_this_island(sub, cfg, tmp_p
 def test_real_gate_commits_a_valid_edit_of_the_reference(sub, cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
     assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "committed"
+
+
+# ── plans and what others are doing ────────────────────────────────────
+def test_plan_tool_call_is_recorded_once_against_the_job(sub, cfg, tmp_path, monkeypatch):
+    def run(workdir, agent_dir, **kw):
+        for idea in ("narrow the low adder window", "something else"):
+            kw["on_event"]({"type": "tool_execution_start", "toolName": "plan", "args": {"idea": idea}})
+        return fake_run(edit=False)(workdir, agent_dir)
+
+    monkeypatch.setattr(worker, "run_pi", run)
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    [ann] = only(sub, "attempt.announced")
+    [plan] = only(sub, "attempt.planned")
+    assert plan.cause == ann.id and plan.subject == ann.subject
+    assert plan.payload == {"island": "main", "plan": "narrow the low adder window"}
+
+
+def planned(sub, island, idea, cause):
+    sub.append("attempt.planned", {"island": island, "plan": idea}, subject="prog:x", actor={"role": "t"},
+               cause=cause)
+
+
+def test_in_progress_hides_ended_other_island_own_and_stale_plans(sub):
+    from datetime import UTC, datetime, timedelta
+    a = sub.append("attempt.announced", {"island": "main", "plan": "p"}, subject="prog:x", actor={"role": "t"})
+    b = sub.append("attempt.announced", {"island": "main", "plan": "p"}, subject="prog:x", actor={"role": "t"})
+    c = sub.append("attempt.announced", {"island": "main", "plan": "p"}, subject="prog:x", actor={"role": "t"})
+    planned(sub, "main", "running idea", a)
+    planned(sub, "main", "ended idea", b)
+    planned(sub, "other", "elsewhere", a)
+    planned(sub, "main", "my own idea", c)
+    sub.append("attempt.abandoned", {"island": "main", "reason": "check_failed"}, subject="prog:x",
+               actor={"role": "t"}, cause=b)
+    assert worker.in_progress(sub, "main", exclude=c) == "- running idea"
+    later = (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
+    assert worker.in_progress(sub, "main", now_ts=later, exclude=c) == "(none)"
+
+
+def test_recent_successes_lists_passing_measurements_newest_first(sub, cfg, tmp_path, monkeypatch):
+    from loop import config
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, final="SUMMARY: freed q30 early"))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    prog = only(sub, "program.committed")[-1].payload["blob"]
+    sub.append("candidate.measured", {"program": prog, "circuit": "sha256:" + "2" * 64, "cost": 1900000.0,
+                                      "passes": True, "benchmark": "invsqrt", "metrics": {},
+                                      "verifier": config.verifier_tag(), "cost_basis": config.COST_BASIS},
+               subject="prog:" + prog, actor={"role": "verifier"})
+    assert worker.recent_successes(sub, "main") == "- freed q30 early -- cost 1,900,000"
+    assert worker.recent_successes(sub, "other") == "(none)"
+
+
+def test_prompt_carries_in_progress_and_successes(sub, cfg, tmp_path, monkeypatch):
+    other = sub.append("attempt.announced", {"island": "main", "plan": "p"}, subject="prog:x", actor={"role": "t"})
+    planned(sub, "main", "merge the two lookups", other)
+    seen = {}
+
+    def run(workdir, agent_dir, **kw):
+        seen.update(kw)
+        return fake_run(edit=False)(workdir, agent_dir)
+
+    monkeypatch.setattr(worker, "run_pi", run)
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    assert "In progress right now on this island" in seen["prompt"] and "- merge the two lookups" in seen["prompt"]
+    assert "Recently worked on this island" in seen["prompt"] and "plan" in seen["tools"]

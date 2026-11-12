@@ -7,5 +7,11 @@ Island instructions:
 Lessons from earlier attempts:
 {lessons}
 
+In progress right now on this island (pick something different):
+{in_progress}
+
+Recently worked on this island (build on these):
+{recent_successes}
+
 Recent attempts on this island that failed (avoid repeating them):
 {recent_failures}

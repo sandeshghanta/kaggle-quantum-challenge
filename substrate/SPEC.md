@@ -88,6 +88,7 @@ against the payload is deferred.)
 | `quota.observed` | Claude plan usage as last reported | `pool:claude` |
 | `attempt.announced` | a lab assistant's one-line plan | `prog:` (parent) |
 | `attempt.abandoned` | a job that ended without a submission, and why | `prog:` (parent) |
+| `attempt.planned` | the idea a job committed to, before its first edit | `prog:` (parent) |
 | `researcher.visited` | a researcher visit began; every decision of the visit has it as `cause` | `bench:` |
 | `direction` | one researcher decision, with why and a checkable prediction (`metric` `island_best_cost` / `bench_best_cost`, `island`, `threshold`, `by_attempts` counted in `attempt.announced` events after the direction) | `bench:` |
 | `island.created` / `island.updated` | island opened / changed | `bench:` |

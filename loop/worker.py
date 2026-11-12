@@ -29,6 +29,8 @@ from substrate.cli import Substrate
 
 DEFAULT_ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v2"
 RECENT_FAILURES = 5
+RECENT_SUCCESSES = 5
+IN_PROGRESS_WINDOW_S = 20 * 60  # a plan older than the longest job is stale even if its job left no end event
 
 
 @dataclass
@@ -78,6 +80,38 @@ def recent_failures(sub: Substrate, island: str, n: int = RECENT_FAILURES) -> st
     return "\n".join(rows) or "(none)"
 
 
+def in_progress(sub: Substrate, island: str, *, now_ts: str | None = None, exclude: str | None = None) -> str:
+    """Plans declared on this island by jobs that have not ended (no commit or abandonment caused by the same
+    announcement) within the last IN_PROGRESS_WINDOW_S."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime.fromisoformat(now_ts.replace("Z", "+00:00")) if now_ts else datetime.now(UTC)
+    cutoff = now - timedelta(seconds=IN_PROGRESS_WINDOW_S)
+    ended = {ev.cause for ev in sub.since(None, types=["program.committed", "attempt.abandoned"], limit=-1)[0]}
+    rows = []
+    for ev in reversed(sub.since(None, types=["attempt.planned"], limit=-1)[0]):
+        if datetime.fromisoformat(ev.ts.replace("Z", "+00:00")) < cutoff:
+            break
+        if ev.payload["island"] == island and ev.cause not in ended and ev.cause != exclude:
+            rows.append(f"- {ev.payload['plan']}")
+    return "\n".join(rows) or "(none)"
+
+
+def recent_successes(sub: Substrate, island: str, n: int = RECENT_SUCCESSES) -> str:
+    """The island's last `n` programs that passed the verifier, newest first: the assistant's note and the cost."""
+    notes = {ev.payload["blob"]: ev.payload.get("note") for ev in sub.since(None, types=["program.committed"],
+                                                                             limit=-1)[0]}
+    rows, seen = [], set()
+    for ev in reversed(sub.since(None, types=["candidate.measured"], limit=-1)[0]):
+        p = ev.payload
+        if not p.get("passes") or p["program"] in seen or pool.island_of(sub, p["program"]) != island:
+            continue
+        seen.add(p["program"])
+        rows.append(f"- {notes.get(p['program']) or '(no note)'} -- cost {p['cost']:,.0f}")
+        if len(rows) == n:
+            break
+    return "\n".join(rows) or "(none)"
+
+
 def _note(final_text: str) -> str:
     for line in final_text.splitlines():
         if line.strip().startswith("SUMMARY:"):
@@ -104,12 +138,18 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
     job = Path(workroot) / ann
     progress = JobProgress(cfg.status_dir, cfg.worker_id, island=island, parent=parent, announcement=ann)
     outcome, summary = "failed", "crashed"
-    checks = 0
+    checks, planned = 0, False
 
     def on_event(ev: dict) -> None:
-        nonlocal checks
+        nonlocal checks, planned
         if ev.get("type") == "tool_execution_end" and ev.get("toolName") == "check":
             checks += 1
+        if ev.get("type") == "tool_execution_start" and ev.get("toolName") == "plan" and not planned:
+            idea = str((ev.get("args") or {}).get("idea") or "").strip()[:500]
+            if idea:  # mirrors the tool: the first plan is the job's plan
+                planned = True
+                sub.append("attempt.planned", {"island": island, "plan": idea}, subject="prog:" + parent,
+                           actor=actor, cause=ann)
         progress.on_event(ev)
 
     def abandon(reason: str, detail: str, note: str, estimate: float | None = None) -> str:
@@ -131,6 +171,7 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
             parent_cost=f"{best:.6g}" if best else "not yet measured",
             gate_cost=f"{gate:.6g}" if gate else "any (nothing measured yet)",
             island_instructions=pool.islands(sub)[island]["instructions"], lessons=_lessons(sub),
+            in_progress=in_progress(sub, island, exclude=ann), recent_successes=recent_successes(sub, island),
             recent_failures=recent_failures(sub, island))
         agent = write_agent_dir(job / "agent", base_url=cfg.base_url, model=cfg.model, api_key_env=cfg.api_key_env,
                                 context_window=cfg.context_window, max_tokens=cfg.max_tokens)

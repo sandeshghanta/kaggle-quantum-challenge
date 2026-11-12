@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/attempt.planned/v1.json",
+  "title": "attempt.planned",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-12",
+  "description": "The idea a lab assistant committed to, declared after reading the code and before its first edit, so others on the island can pick something else. Cause is the job's attempt.announced; subject is prog:<parent program>.",
+  "type": "object",
+  "required": ["island", "plan"],
+  "properties": {
+    "island": {"type": "string", "description": "Island id."},
+    "plan": {"type": "string", "maxLength": 500, "description": "One line: the concrete change it is about to make."}
+  }
+}

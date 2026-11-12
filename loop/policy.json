@@ -17,6 +17,7 @@
       "append": {
         "attempt.announced": {},
         "attempt.abandoned": {},
+        "attempt.planned": {},
         "program.committed": {},
         "island.joined": {
           "via": [
