@@ -31,9 +31,10 @@
         "build_failed",
         "quick_check_failed",
         "duplicate",
-        "not_better"
+        "not_better",
+        "verify_error"
       ],
-      "description": "Why it stopped: the generator failed, the cheap check failed, it was a near-copy of a program already in the island, or it passed the cheap check but would not beat its bucket."
+      "description": "Why it stopped: the generator failed, the cheap check failed, it was a near-copy of a program already in the island, or it passed the cheap check but would not beat its bucket. verify_error: the verifier itself failed on this program (timeout, out of memory, internal error); it is recorded so the verifier moves on instead of retrying forever."
     },
     "detail": {
       "type": "string",

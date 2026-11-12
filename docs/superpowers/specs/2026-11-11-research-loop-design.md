@@ -106,7 +106,7 @@ reduces the risk; the human accepts what remains.
 **Harness.** pi (`@earendil-works/pi-coding-agent`, v1.5.x, MIT) for **every** agent.
 Facts:
 - Headless via `--mode json` (one-shot JSONL events) or `--mode rpc` (long-running,
-  JSONL over stdio). No Python SDK, so the orchestrator spawns pi processes and parses
+  JSONL over stdio). No Python SDK, so loop services spawn pi processes and parse
   JSONL.
 - Qwen is configured as a provider in `models.json` (`api: "openai-completions"`,
   `baseUrl`, Qwen thinking format). Set `contextWindow` and `maxTokens` to the server's
@@ -153,12 +153,30 @@ The loop is disposable; the substrate is not.
 | Researcher | Opus 5.5 via pi + pi-claude-bridge, Pro login | a few times a day, budget permitting; or on human-confirmed request | set direction at the island level; maintain the lessons note; log decisions with predictions |
 | Lab assistant | Qwen via pi, OpenAI-compatible endpoint | continuously, N in parallel | edit generator programs, submit candidates |
 | Admin chat | Qwen via pi, read-only tools | on demand | answer status questions; route steering and ideas to the researcher after confirmation |
-| Orchestrator | plain Python, no model | always | schedule, launch, supervise, verify, pace, record |
+| Verifier service | plain Python, no model | always, exactly one | build, check and record every committed program |
+| Researcher service | plain Python, no model | always | decide when the researcher visits, build its digest, apply its decisions, publish the dashboard |
 
-### Orchestrator
+### Services (no central orchestrator)
 
-- **Process model:** systemd keeps the orchestrator and long-lived services running
-  and enforces CPU and memory limits. A small Python scheduler runs inside it.
+There is no central orchestrator process. Independent services coordinate only through
+the substrate, so each can be restarted alone:
+
+| Service | Instances | Does |
+|---|---|---|
+| `loop.worker` (lab assistant) | N | picks an island and a parent, announces, runs one pi job, commits the result; repeats |
+| `loop.verifier` | exactly 1 | tails the log; builds, checks and records each committed program |
+| `loop.researcher` (later) | 1 | the researcher's scheduler: checks the Claude quota, builds the digest, runs the Opus visit, applies its decisions as events, writes `quota.observed`, publishes the dashboard |
+| admin chat (later) | 1 | answers status from the log; routes confirmed steering to `loop.researcher` |
+
+Coordination rules:
+- Workers spread out by reading `attempt.announced` events (the children count). Nobody
+  assigns jobs.
+- The verifier keeps its place with a persisted cursor.
+- The researcher steers through island events that workers read on their next job.
+
+- **Process model:** systemd keeps every service running, restarts it on failure, and
+  enforces CPU and memory limits. Each service finishes its current job on stop
+  (`KillMode=mixed`, `TimeoutStopSec=900`).
 - **Packaging (my call):** this repo ships a `flake.nix` with two outputs:
   - a dev shell with Python/uv, Node + pi, and kickmix able to run on NixOS
   - a NixOS module (e.g. `services.research-loop`) defining the systemd units and the
@@ -173,13 +191,6 @@ The loop is disposable; the substrate is not.
   Anything that can't be is kept in a loop-owned table or file, never in the event log.
   Durable-step libraries (DBOS) are allowed but not required. Temporal is out (too
   heavy for one VM).
-- **Responsibilities:**
-  - wake the researcher on schedule if the budget allows
-  - keep N lab assistants running and hand them jobs
-  - run the verification queue under resource limits
-  - record `budget.spent` for every agent run
-  - relay admin chat
-  - kill runaway processes
 
 ### The program pool: islands (camps)
 
@@ -216,7 +227,7 @@ The loop is disposable; the substrate is not.
 
 ### Lab assistant cycle
 
-1. **Get a job.** The orchestrator picks an island by the researcher's allocation
+1. **Get a job.** The worker picks an island by the researcher's allocation
    weights. It then picks a parent in that island with weight
    `sigmoid(λ·z(score)) × 1/(1 + children)`, where z is a robust z-score (median/MAD)
    within the island, after ShinkaEvolve. `children` counts jobs **handed out** from that
@@ -275,7 +286,7 @@ simpler and avoid context build-up.
   reserve: 30% of each window, my call; configurable). Also immediately on a
   human-confirmed request from the admin chat, subject to the same check.
 - **Reading the budget (my call):** usage percentages only arrive with a response, so
-  there is no free pre-check. After every Claude run the orchestrator appends
+  there is no free pre-check. After every Claude run the researcher service appends
   `quota.observed`. The gate reads the latest one:
   - If the last observation is past its reset time, the window is assumed fresh and one
     visit is allowed.
@@ -321,9 +332,17 @@ simpler and avoid context build-up.
 
 ### Progress view
 
-A local web page for one task (invsqrt). Layout: the "Scoreboard + researcher
-insights" mockup in `docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html`
-(numbers in it are made up). Refreshes by polling (my call).
+A **claude.ai artifact** (private by default), laid out like the "Scoreboard + researcher insights"
+mockup in `docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html` (numbers in it
+are made up). Only the researcher updates it:
+- The page (HTML) is published once.
+- At every researcher visit, the researcher service builds `snapshot.json` from the substrate
+  (code, not the model), and the researcher publishes it as the artifact's data file in one
+  Artifact call. The file is passed by path, so a publish costs a few hundred tokens.
+- The page shows the snapshot's time and refreshes only on visits (~3 h, or a confirmed
+  admin-chat request).
+- Open check, done in the researcher plan: whether pi-claude-bridge exposes Claude Code's
+  Artifact tool. If it doesn't, a tiny `claude -p` call after each visit does the publish.
 
 - **Where we stand:**
   - ratio vs reference
@@ -384,7 +403,7 @@ version that produced it.
 - Every event an agent writes carries `actor.harness = "<role>/v<N>@<git-sha>"`, so
   the substrate can answer "did lab_assistant v3 beat v2 per Qwen token?".
 
-**The orchestrator selects versions by config, and can split traffic.**
+**Services select versions by config, and can split traffic.**
 - Config (in git) names the active version per role, optionally with weights, e.g.
   80% of lab assistants on v2 and 20% on v3, for A/B comparison.
 - Activating or changing a version appends a `loop.config_changed` event, so the log records when each behaviour was live.
