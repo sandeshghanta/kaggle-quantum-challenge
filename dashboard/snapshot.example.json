@@ -1,0 +1,66 @@
+{
+  "example": true,
+  "generated_at": "2026-11-12T09:40:00Z",
+  "benchmark": "invsqrt",
+  "score": {
+    "best_cost": 121340,
+    "Q": 82,
+    "T": 1480,
+    "reference_cost": 2076774,
+    "public_best_ratio": 15.2,
+    "top_ratio": 20.6,
+    "ratio_24h_ago": 16.3
+  },
+  "history": [
+    {"t": "2026-11-11T10:00:00Z", "cost": 148978},
+    {"t": "2026-11-11T14:00:00Z", "cost": 148978},
+    {"t": "2026-11-11T17:00:00Z", "cost": 141200},
+    {"t": "2026-11-11T21:00:00Z", "cost": 139900},
+    {"t": "2026-11-12T01:00:00Z", "cost": 131500},
+    {"t": "2026-11-12T04:00:00Z", "cost": 130800},
+    {"t": "2026-11-12T06:30:00Z", "cost": 126010},
+    {"t": "2026-11-12T08:15:00Z", "cost": 121340},
+    {"t": "2026-11-12T09:40:00Z", "cost": 121340}
+  ],
+  "marks": [
+    {"t": "2026-11-11T16:30:00Z", "label": "D1"},
+    {"t": "2026-11-12T00:15:00Z", "label": "D2"},
+    {"t": "2026-11-12T06:02:00Z", "label": "D3"},
+    {"t": "2026-11-12T09:40:00Z", "label": "D4"}
+  ],
+  "health": {
+    "researcher": {"five_hour_pct": 40, "seven_day_pct": 22, "cap_pct": 80, "visits_24h": 18, "next_visit": "2026-11-12T10:25:00Z"},
+    "assistants": {"running": 8, "attempts_24h": 1840, "hit_rate": 0.021, "sweep_fail_rate": 0.14},
+    "verifier": {"backlog": 7, "oldest_wait_min": 4.2, "full_checks_24h": 31}
+  },
+  "current_direction": {
+    "id": "D4",
+    "t": "2026-11-12T09:40:00Z",
+    "brief": "Restart the polynomial island from the Marsyas island's best program; move two assistants to the Marsyas island.",
+    "why": "The polynomial island made no gain in 400 attempts; the Marsyas island improved 9% in 190.",
+    "prediction": "Marsyas island best cost below 118,000 within 300 attempts",
+    "progress": "40 / 300 attempts",
+    "explore_share": 0.35
+  },
+  "islands": [
+    {"id": "marsyas", "idea": "Marsyas generator, tighter Newton step", "assistants": 5, "best_cost": 121340, "trend_pct": -4.0, "call": "exploit"},
+    {"id": "poly", "idea": "Piecewise cubic seed, restarted", "assistants": 1, "best_cost": 140002, "trend_pct": 0.0, "call": "restarted"},
+    {"id": "main", "idea": "Reference Newton-Raphson", "assistants": 1, "best_cost": 1980000, "trend_pct": -1.2, "call": "long shot"},
+    {"id": "table", "idea": "2^10 table plus extra Newton step", "assistants": 1, "best_cost": null, "trend_pct": null, "call": "new"}
+  ],
+  "decisions": [
+    {"id": "D4", "t": "2026-11-12T09:40:00Z", "brief": "Restart the polynomial island from Marsyas best", "prediction": "Marsyas best < 118,000 in 300 attempts", "outcome": "open", "detail": "40 attempts so far", "tokens": 31000},
+    {"id": "D3", "t": "2026-11-12T06:02:00Z", "brief": "Try a 2^10 table plus one extra Newton step", "prediction": "nets out if refinement < 400 Toffolis", "outcome": "met", "detail": "new best 121,340 (-4%)", "tokens": 36000},
+    {"id": "D2", "t": "2026-11-12T00:15:00Z", "brief": "Signed-digit table entries", "prediction": "-3% Toffolis", "outcome": "missed", "detail": "no gain in 260 attempts", "tokens": 28000},
+    {"id": "D1", "t": "2026-11-11T16:30:00Z", "brief": "Seed islands from the strongest clean public generators", "prediction": "baseline reproduced on 4 salts", "outcome": "met", "detail": "13.9x reproduced", "tokens": 22000}
+  ],
+  "decision_summary": {"closed": 3, "paid_off": 2, "tokens_per_improvement": 58000},
+  "beliefs": {
+    "working": ["Smaller lookup tables plus one extra refinement step", "Reusing ancilla across Newton iterations"],
+    "not_working": ["Signed-digit tables", "Higher-degree polynomials: cost grows faster than precision"],
+    "open_questions": ["Is Q at or below 80 reachable without a Toffoli blow-up?"]
+  },
+  "questions": [
+    {"t": "2026-11-12T09:40:00Z", "text": "The claimed top score implies roughly 60 qubits. Should one visit be spent on a radically low-qubit design even if the main line stalls for a few hours?"}
+  ]
+}
