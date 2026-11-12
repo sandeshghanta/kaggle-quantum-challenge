@@ -8,7 +8,7 @@ P = policy.load(policy.DEFAULT_PATH)
 
 def test_users_map_to_roles():
     assert P.role_for_user("rl-worker") == "worker" and P.role_for_user("rl-live") == "live" and P.role_for_user("nobody") is None
-    assert P.role_for_user("rl-researcher") == "researcher" and P.role_for_user("sandeshg") == "viewer"
+    assert P.role_for_user("rl-researcher") == "researcher"
 
 
 @pytest.mark.parametrize("principal,type,payload,ok", [
@@ -51,3 +51,16 @@ def test_authorize_table(principal, type, payload, ok):
     else:
         with pytest.raises(Forbidden):
             P.authorize(principal, type, "x:y", payload)
+
+
+def test_groups_grant_roles_to_unlisted_users():
+    assert P.role_for("alice", ["users", "substrate-viewers"]) == "viewer"
+    assert P.role_for("alice", ["users"]) is None
+    assert P.role_for("rl-worker", ["substrate-viewers"]) == "worker"  # a listed user name wins
+    assert "sandeshg" not in P.users  # people are added by the deployment, not the repo
+
+
+def test_viewer_can_write_nothing():
+    for t in ("candidate.measured", "direction", "blob"):
+        with pytest.raises(Forbidden):
+            P.authorize("viewer", t, "x:y", {})

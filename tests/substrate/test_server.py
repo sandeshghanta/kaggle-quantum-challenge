@@ -18,7 +18,8 @@ def server(tmp_path):
     sockdir = Path(tempfile.mkdtemp(dir="/tmp", prefix="sd-"))
     who = {"user": "rl-worker"}
     srv = make_server(sockdir / "api.sock", tmp_path / "data", policy=policy.load(),
-                      uid_to_user=lambda uid: who["user"], max_body=1 << 20)
+                      uid_to_user=lambda uid: who["user"], user_groups=lambda u: who.get("groups", []),
+                      max_body=1 << 20)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     yield sockdir / "api.sock", who
@@ -110,3 +111,11 @@ def test_unknown_caller_is_refused_before_body_is_read(server):
     who["user"] = "mallory"
     resp = _raw(sock, b"POST /v1/put_blob HTTP/1.1\r\nHost: x\r\nContent-Length: 999999999\r\n\r\n")
     assert resp.startswith(b"HTTP/1.1 403")
+
+
+def test_group_member_can_read_but_not_write(server):
+    sock, who = server
+    who["user"], who["groups"] = "alice", ["substrate-viewers"]
+    assert call(sock, "POST", "/v1/since", {"cursor": None})[0] == 200
+    status, body = append(sock, "attempt.announced", ANN, subject="prog:sha256:" + "a" * 64)
+    assert status == 403 and body["error"] == "Forbidden"
