@@ -28,6 +28,105 @@ The researcher directs the lab assistants through the substrate, the verifier ju
 The parts never call each other: they coordinate only by reading and writing the substrate, so
 there is no central orchestrator and each part can be stopped or replaced independently.
 
+### Researcher
+
+The researcher is the only part that spends the scarce strong-model budget, so it runs a few times
+a day and never does individual experiments. Each visit it reads a digest prepared by code (how each
+island is trending, past directions and how they turned out, recent failure patterns, budget state,
+new human instructions) and records its decisions as events:
+
+- a **direction** per decision, with the reason and a checkable prediction;
+- the **island changes** that carry the direction out;
+- **lessons** (what works, what does not, open questions) that every lab assistant reads;
+- **questions** for the human.
+
+Predictions are marked met or missed by code from later events, not by the model. A budget gate
+decides whether a visit may happen at all.
+
+### Lab assistants
+
+Lab assistants are many cheap agents working in parallel, each repeating one cycle: choose an
+island and a parent program in it, announce what it is about to try, read a brief (the parent
+program, the island's instructions, the lessons so far), then make one small, targeted change to the
+generator and submit it as a new program. Every attempt is recorded, whether it changes anything or
+not, along with what it cost. An assistant's behaviour (prompt, tools, limits) is a versioned role,
+and every event it writes names that version, so results are attributable to the behaviour that
+produced them.
+
+A **program** is a bundle holding a circuit generator; building it yields a circuit, and a
+**candidate** is one such circuit. One program has many candidates. The first program is Google's
+reference generator, and further islands are seeded from the strongest public generators, one
+approach per island.
+
+### Verifier
+
+The verifier is plain code with no model. It scores every new program using the competition's own
+checker, in tiers, so the expensive check runs only on candidates that might matter:
+
+- **Build** the generator in isolation; a program that fails to build is rejected.
+- **Duplicate rejection**: a circuit identical to one already measured is rejected, since
+  re-measuring buys nothing.
+- **Full-domain sweep**: run the circuit once on every input. This catches circuits that are wrong
+  anywhere in the domain and yields a cost estimate.
+- **Gate**: reject as "not better" only if the estimate is more than 5% worse than the island's
+  best; a random 5% of those rejections go to the full check anyway, as an audit of the gate.
+- **Full check**: many shots per input, one salt at a time, stopping at the first failing salt.
+
+Every outcome is recorded as an event, and "not better" means not fully verified, not dropped.
+
+### Islands and parent selection
+
+Programs belong to **islands**, each pursuing one idea and carrying instructions written for the
+assistants. Islands exist only in the loop, derived from events; the substrate knows nothing about
+them. A lab assistant picks an island by weight, then a parent within it, favouring good programs
+that few others are already working from. There is no central assignment: every announcement lowers
+the parent's weight for the next assistant that reads the log, so concurrent assistants spread out
+on their own. The researcher drives island weights, migration, restarts from a chosen program, and
+retirement.
+
+### Substrate
+
+**Purpose.** The substrate is the system's permanent memory: an append-only record of everything
+that happened (programs written, circuits measured, decisions taken, resources spent) plus the
+files those facts refer to. Every other part reads and writes only through it, and the research
+loop itself is disposable: it can be rewritten, or replaced by a different design, and pick up from
+the same history.
+
+**Design.** It is event-sourced. Each fact is an immutable event; current state (the best circuit
+so far, an island's members, a program's lineage) is computed from events when asked, never stored
+and updated. An event is an *envelope* that every event shares (identity, time, type, the thing it
+is about, who wrote it, what prompted it) wrapping a type-specific *payload*.
+
+**Versioning.** Event shapes evolve, so the design makes change safe rather than forbidding it:
+
+- The envelope and each event type carry independent version numbers, so one type can change
+  without touching any other.
+- Every event type has a JSON Schema per version, and every write is validated against it; an
+  invalid or unknown event is rejected before anything is stored.
+- Nothing already written is ever rewritten. Readers convert old payloads to the current shape on
+  read (upcasting) and refuse versions newer than they understand.
+- A field whose meaning changes gets a new name, so old and new data can never be confused.
+
+The contract is [`substrate/SPEC.md`](substrate/SPEC.md); every event type and its fields are in
+[`substrate/schema/`](substrate/schema/).
+
+### Admin chat
+
+A Qwen-backed agent with read-only access to the substrate. It answers status questions and
+explanations itself. Steering and ideas need the researcher, so it shows the current Claude budget
+and asks the human to confirm; once confirmed, the message is recorded as an instruction and the
+researcher visits immediately if the budget allows, or at its next scheduled visit otherwise. The
+strong model is used only after that explicit confirmation.
+
+### Progress dashboard
+
+A private page the researcher publishes, laid out as in
+[`docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html`](docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html)
+(the numbers in the mockup are invented). It shows where the score stands against the public best
+and the claimed top, best cost over time marked with each researcher direction, system health
+(budget, assistant hit rate, verifier queue), the island table, the decision log with predictions
+and outcomes, and open questions. It refreshes with each researcher visit rather than live.
+
 ## Why this shape
 
 The competition's scoring function runs locally, exactly, and for free. So the scarce input is not
@@ -55,190 +154,29 @@ Consequences that shape the research loop:
   attempts in seconds; the full multi-salt check runs only on candidates that might beat their
   island.
 
-## Components
-
-### Substrate
-
-**Purpose.** The substrate is the system's memory: an append-only record of everything that
-happened (programs written, circuits measured, decisions taken, resources spent) plus the files those
-facts refer to. Every other part reads and writes only through it, and the research loop itself is
-treated as disposable: it can be rewritten, or replaced by a different design, and pick up from the
-same history. The contract is [`substrate/SPEC.md`](substrate/SPEC.md).
-
-**Design.** It is event-sourced. Each fact is an immutable event; current state (the best circuit
-so far, an island's members, a program's lineage) is computed from events when asked, never stored
-and updated. An event is an *envelope* that every event shares (identity, time, type, the thing it
-is about, who wrote it, what prompted it) wrapping a type-specific *payload*.
-
-**Versioning.** Event shapes do evolve, so the design makes change safe rather than forbidding it:
-
-- The envelope and each event type carry independent version numbers, so one type can change
-  without touching any other.
-- Every event type has a JSON Schema per version, and every write is validated against it; an
-  invalid or unknown event is rejected before anything is stored.
-- Nothing already written is ever rewritten. Readers convert old payloads to the current shape on
-  read (upcasters), ignore fields they do not know, and refuse versions newer than they understand
-  rather than guess.
-- A field whose meaning changes gets a new name, so old and new data can never be confused.
-
-The full list of event types and their fields lives in [`substrate/schema/`](substrate/schema/).
-
-### Programs and candidates
-
-A **program** is a bundle: a directory with an entry script `gen.py <out.kmb>` plus any modules or
-data it reads, stored as one deterministic tarball blob (`loop/programs.py`). It builds a circuit
-with kickmix's `CircuitBuilder` and writes a `.kmb` file. A **candidate** is one circuit built
-from a program, identified by the circuit's hash; one program has many candidates.
-
-Two relations are easy to confuse. `parent` (payload of `program.committed`) is the program this
-one was edited from, and rebuilds the search tree. `cause` (envelope, any event) is the event that
-prompted this one, and drives attribution, for example from spend back to the announcement it
-served, or from an island change back to the researcher's direction.
-
-Seeds are ported generators, not opaque circuits. The first program is Google's reference
-generator (about 1x), loaded by `loop/seed.py`, and further islands are seeded from the strongest
-public generators, one approach per island.
-
-### Lab assistants
-
-Lab assistants are many cheap agents (Qwen) working in parallel, each repeating one cycle:
-
-1. Choose an island and a parent program in it (see islands below).
-2. Announce what it is about to try, so the attempt is visible to others.
-3. Read a brief: the parent program, the island's instructions from the researcher, and the
-   lessons learned so far.
-4. Make one small, targeted change to the generator and submit the result as a new program.
-
-Every attempt is recorded, whether it changes anything or not, along with what it cost. An
-assistant's behaviour (its prompt, tools and limits) is a versioned role, and every event it writes
-names that version, so results can be attributed to the exact behaviour that produced them.
-
-### Verifier
-
-`loop.verifier` is a plain-Python service with no model. It tails `program.committed` with a
-persisted cursor and, for each program that has no verdict yet, runs the tiers below using the
-competition's own checker (`verifiers/`, vendored from the competition's official invsqrt verifier
-by Google, Apache-2.0). Every outcome is an event, `candidate.measured` or `candidate.rejected`,
-plus a `budget.spent` for the CPU used. It logs its backlog (pending count and oldest pending age)
-on every loop.
-
-The pipeline is tiered so the expensive check runs only on candidates that might matter:
-
-| Stage | Check | Outcome |
-|---|---|---|
-| Build | run the generator in isolation, with a time limit | `build_failed` |
-| Novelty gate | reject a circuit identical (by hash) to one already measured | `duplicate` |
-| Sweep | every x in the domain, 1 shot each (about 28 CPU-s); validates the circuit and yields a cost estimate | `quick_check_failed` (tier `sweep`), or an estimate `{cost, Q, T}` |
-| Gate | reject as `not_better` only if the estimate is more than 5% worse than the island's best; a random 5% of such rejections go to the full check anyway | `not_better` |
-| Full check | 64 shots per x, on salt 1 first, then the remaining salts, stopping at the first failing salt | `candidate.measured`, with `passes: false` and a `failure` if a salt fails |
-
-`not_better` means "not fully verified", not "dropped": the program stays a possible parent at
-reduced weight. The 5% audit keeps the gate honest, because its rejections that would have won are
-visible and counted. An uncaught error while evaluating one program is recorded as
-`candidate.rejected` with reason `verify_error` and the loop moves on.
-
-Why a sweep before the full check: the full check is far more expensive, most candidates are broken
-or no better than their island, and the sweep covers every x, so a circuit that is wrong only at
-large x is caught without paying for the full check.
-
-Why salts: measurement-based uncomputation draws random outcomes per shot, seeded from the circuit
-hash and a salt. A correct circuit passes every outcome; a buggy correction path fails only on
-some. More salts mean more outcome coverage, and the leaderboard uses a secret salt, so passing
-local seeds is necessary, not sufficient. The reported cost is the worst across salts.
-
-Why identical circuits are rejected: the verifier is deterministic given circuit and salt, so
-re-measuring an identical circuit buys nothing. Models also propose no-op or cosmetic edits
-constantly, and rejecting them keeps the island from filling with copies.
-
-There is exactly one verifier instance. Nothing claims a program before verifying it, so a second
-instance would score everything twice.
-
-### Islands and parent selection
-
-Programs belong to **islands**, each pursuing one idea and carrying instructions written for the
-assistants. Island state is derived from events (`island.created`, `island.updated`,
-`island.joined`) in `loop/pool.py`; the substrate knows nothing about islands. Membership is its own
-event rather than a field on `program.committed`, so one program can join several islands (for
-migration or restart) without making its single commit ambiguous.
-
-Workers pick an island by weight, then a parent with weight
-
-```
-sigmoid(lambda * z(score)) / (1 + children)
-```
-
-where `z` is a robust z-score (median and MAD) of cost within the island and `children` counts
-`attempt.announced` events on that parent, that is, jobs handed out, not jobs finished. Programs
-not yet judged get a small fixed weight, and rejected programs are never parents.
-
-There is no central assignment: concurrent workers spread out because each announcement lowers the
-parent's weight for the next worker that reads the log. The researcher drives island weights,
-migration, restarting an island from a chosen program, and retirement.
-
-### Researcher
-
-Opus, run through pi with the pi-claude-bridge extension, which drives Claude Code through the
-official Agent SDK on a Claude Pro login. It is the only component that spends the scarce budget,
-so it runs a few times a day, never more than a fixed schedule allows.
-
-- **Budget gate.** Plan usage arrives only with a response, so there is no free pre-check. After
-  every Claude run the researcher service appends `quota.observed`; before a visit it reads the
-  latest one. If that observation is past its reset time the window is assumed fresh; otherwise a
-  visit is allowed only if the five-hour and weekly used-percentages are both below 80%; the last
-  20% is kept as a backup.
-- **Digest.** Input is a digest built by code, not by the model exploring the repo: frontier and
-  trend per island, past directions and outcomes, recent failure patterns, assistant hit rate,
-  budget state, and new human instructions.
-- **Output** is structured and recorded as events: one `direction` per decision with `brief`,
-  `why` and a checkable `prediction` (`metric`, `threshold`, `by_attempts`); the island changes
-  that carry it out, each with `cause` set to the direction; `lessons.published` (working, not
-  working, open questions); and `question.asked` for the human.
-- **Outcomes** are closed by code, not by the model: each prediction is marked met, missed or
-  open from the events.
-- **Lessons note.** The latest `lessons.published` is read by workers into their brief.
-
-The researcher runs as its own Unix user, so the policy lets only it write these event types.
-
-### Admin chat
-
-A Qwen-backed pi agent with read-only substrate tools. Qwen classifies each message. Status
-questions and explanations it answers itself. Steering and ideas need the researcher, so it shows
-the current Claude budget and asks the human to confirm; on confirmation the message is recorded
-as `human.instructed` and the researcher runs immediately if the budget gate allows, otherwise the
-request waits for the next scheduled visit. Opus is only used after that explicit confirmation.
-
-### Progress dashboard
-
-A private claude.ai artifact the researcher publishes, laid out as in
-[`docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html`](docs/superpowers/specs/assets/2026-11-11-progress-view-mockup.html)
-(the numbers in the mockup are invented). It shows where the score stands against the public best
-and the claimed top, best cost over time marked with each researcher direction, system health
-(budget bars, assistant hit rate, verifier queue), the island table, the decision log with
-predictions and outcomes, and open questions.
-
-Only the researcher updates it. At each visit, code builds `snapshot.json` from the substrate and
-the researcher publishes it as the artifact's data file, passed by path so a publish costs a few
-hundred tokens. The page therefore refreshes with each visit rather than live. If pi-claude-bridge
-does not expose Claude Code's Artifact tool, a small `claude -p` call after each visit does the
-publish.
-
-## Implementation
+## Deployment and security
 
 ### Storage
 
-Events live in a single SQLite database (WAL mode) whose commit-order sequence
-number is the cursor every consumer resumes from; updates and deletes are blocked by triggers.
-Programs and circuits are stored as files named by their SHA-256 hash, compressed with zstd. The
-query layer (best candidates, lineage, budget totals) is a set of read-only projections over the
-events.
+Events live in a single SQLite database (WAL mode) whose commit-order sequence number (`seq`) is
+the cursor every consumer resumes from; triggers block updates and deletes. Programs and circuits
+are stored as files named by their SHA-256 hash, compressed with zstd. The query layer (best
+candidates, lineage, budget totals) is a set of read-only projections over the events.
 
 ### The substrate service
 
-The substrate runs as `substrated`, the only process allowed to open
-the database and files. Loop components call it over a local Unix socket. It identifies each caller
-by its Unix user rather than trusting what the caller claims, and a policy file
-(`loop/policy.json`) limits each role to the event types it needs: workers can submit programs but
-cannot record measurements, the verifier can record measurements but cannot submit programs.
+The substrate runs as `substrated`, the only process allowed to open the database and files. Loop
+components call it over a local Unix socket. It identifies each caller by its Unix user
+(`SO_PEERCRED`) rather than trusting what the caller claims, and stamps the caller's role on every
+event itself. A policy file (`loop/policy.json`) limits each role to the event types it needs:
+
+| Role | May write | May not |
+|---|---|---|
+| Lab assistant worker | announcements, program submissions, its own spend | measurements |
+| Verifier | measurements, rejections, verifier spend | program submissions |
+| Researcher | directions, island changes, lessons, questions, quota observations | measurements |
+
+Clients retry with backoff, so `substrated` can be restarted without losing writes.
 
 ### Sandboxing
 
@@ -261,17 +199,26 @@ development and tests still work.
 Every agent runs in the pi coding-agent harness, headless, one fresh process per job. Lab assistants
 use a self-hosted Qwen endpoint with a read/edit/search tool allowlist and a capped output budget;
 their brief is ordered stable-first so the model server's prefix cache covers it. The researcher
-uses Claude Opus through pi-claude-bridge, which drives Claude Code via the official Agent SDK on the
-Pro plan. Workers back off exponentially after repeated failures so an unreachable endpoint never
-causes a hot loop.
+and its digest use Claude Opus through pi-claude-bridge, which drives Claude Code through the
+official Agent SDK on a Claude Pro login. The plan is used only by the loop, and the rule is: at
+most 80% of either Pro plan limit; the last 20% is a backup. Plan usage arrives only with a
+response, so after every Claude run the researcher service records the observed usage, and before a
+visit it reads the latest observation: a visit is allowed only if both the five-hour and weekly
+figures are under the limit, or the observation is past its reset time. Workers back off
+exponentially after repeated failures, so an unreachable endpoint never causes a hot loop.
 
-### Processes and deployment
+### Processes
 
 Each part of the loop is an independent systemd service: one `substrated`, N lab assistant workers,
 exactly one verifier, and the researcher service. There is no central orchestrator; services
-coordinate only through the substrate, and each finishes its current job before stopping, so any one
-can be restarted alone. A Nix flake provides the toolchain and a NixOS module defining the services,
-while the loop code runs from a git checkout, so code updates need a pull and a restart, not a
+coordinate only through the substrate, and each finishes its current job before stopping, so any
+one can be restarted alone. Exactly one verifier runs because nothing claims a program before
+verifying it, so a second instance would score everything twice.
+
+### Nix and releases
+
+A Nix flake provides the toolchain, and a NixOS module defines the services and the per-role Unix
+users. The loop code runs from a git checkout, so a code update needs a pull and a restart, not a
 rebuild. See [`docs/deploy.md`](docs/deploy.md).
 
 ## Key design decisions
