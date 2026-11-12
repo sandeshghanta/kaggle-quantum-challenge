@@ -14,6 +14,7 @@ from pathlib import Path
 from loop import config, pool
 from loop.pi_runner import run_pi, write_agent_dir
 from loop.programs import pack, unpack
+from substrate import connect
 from substrate.cli import Substrate
 
 DEFAULT_ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v1"
@@ -95,7 +96,8 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root", required=True)
+    p.add_argument("--substrate", "--root", dest="substrate", required=True,
+                   help="data directory (in-process) or unix:/run/substrate/api.sock")
     p.add_argument("--id", type=int, required=True)
     p.add_argument("--base-url", required=True)
     p.add_argument("--model", required=True)
@@ -116,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, on_term)
     cfg = WorkerConfig(args.base_url, args.model, args.api_key_env, args.context_window, args.max_tokens,
                        Path(args.role_dir), args.id)
-    sub = Substrate(args.root)
+    sub = connect(args.substrate)
     rng = random.Random()
     failures = 0
     while not stopping:

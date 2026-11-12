@@ -39,6 +39,38 @@
     "detail": {
       "type": "string",
       "description": "Error text or explanation, trimmed. Shown to later lab assistants in their island summary."
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "build",
+        "duplicate",
+        "sweep",
+        "gate",
+        "verify"
+      ],
+      "description": "Which verification tier stopped this attempt: build (generator failed in its sandbox), duplicate (identical circuit already measured), sweep (failed the full-domain one-shot check), gate (estimate too far above the island's best), verify (the verifier itself failed)."
+    },
+    "estimate": {
+      "type": "object",
+      "description": "Cost estimate from the full-domain sweep, when it ran: {cost, Q, T}. Lets later analysis check how often the gate rejected something good.",
+      "properties": {
+        "cost": {
+          "type": "number"
+        },
+        "Q": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "T": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
     }
   }
 }

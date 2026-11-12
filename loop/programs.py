@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from loop import sandbox
+
 STDERR_LIMIT = 4000
 
 
@@ -64,7 +66,10 @@ def build(bundle_dir: Path, out_kmb: Path, *, timeout: float = 120) -> BuildResu
     out_kmb = Path(out_kmb)
     out_kmb.unlink(missing_ok=True)
     start = time.monotonic()
-    proc = subprocess.Popen([sys.executable, "-I", "gen.py", str(out_kmb)], cwd=bundle_dir,
+    cmd = sandbox.wrap([sys.executable, "-I", "gen.py", str(out_kmb)],
+                       rw=sorted({Path(bundle_dir), out_kmb.parent}), ro=sandbox.python_paths(), network=False,
+                       cwd=Path(bundle_dir))
+    proc = subprocess.Popen(cmd, cwd=bundle_dir,
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                             start_new_session=True)
     try:

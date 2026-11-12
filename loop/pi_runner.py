@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import os
 import selectors
+import shutil
 import signal
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from loop import sandbox
 
 PROVIDER = "qwen"
 
@@ -53,6 +56,9 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
            *(["--tools", ",".join(tools)] if tools else ["-nt"]),
            "--append-system-prompt", str(system_append), prompt]
     env = os.environ | {"PI_CODING_AGENT_DIR": str(agent_dir)}
+    pi_bin = shutil.which("pi")
+    ro = [Path(system_append).resolve().parent] + ([Path(pi_bin).resolve().parent.parent] if pi_bin else [])
+    cmd = sandbox.wrap(cmd, rw=[Path(workdir), Path(agent_dir)], ro=ro, network=True, cwd=Path(workdir))
     start = time.monotonic()
     proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True)

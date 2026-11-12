@@ -20,7 +20,7 @@
   services.research-loop = {
     enable = true;
     repo.url = "https://github.com/sandeshghanta/kaggle-quantum-challenge.git";
-    repo.ref = "sandesh/_claude/first-loop";
+    repo.ref = "main";
     workers = 2;
     model.baseUrl = "http://127.0.0.1:8099/v1";
     model.name = "fake-model";
@@ -34,11 +34,7 @@
     requires = [ "research-loop-checkout.service" ];
     wantedBy = [ "multi-user.target" ];
     before = [ "research-loop.target" ];
-    path = [ pkgs.uv pkgs.python312 ];
-    environment = { HOME = "/var/lib/research-loop"; UV_PYTHON_DOWNLOADS = "never";
-                    UV_PYTHON = "${pkgs.python312}/bin/python3.12";
-                    UV_CACHE_DIR = "/var/lib/research-loop/.cache/uv"; };
-    serviceConfig = { User = "research-loop"; WorkingDirectory = "/var/lib/research-loop/repo"; };
-    script = "exec uv run python -m tests.fakes.openai_server --port 8099";
+    serviceConfig = { User = "rl-deploy"; WorkingDirectory = "/var/lib/research-loop/repo";
+                      ExecStart = "/var/lib/research-loop/repo/.venv/bin/python -m tests.fakes.openai_server --port 8099"; };
   };
 }

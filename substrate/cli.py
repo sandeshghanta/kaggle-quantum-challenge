@@ -23,7 +23,11 @@ from substrate._store import Busy, Store
 from substrate.types import BudgetState, Candidate, Event, Node
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "var" / "substrate"
-_ERRORS = (SchemaViolation, UnknownVersion, BlobNotFound, Busy, ValueError, OSError, sqlite3.Error)
+class Forbidden(PermissionError):
+    """The authorize hook refused this write."""
+
+
+_ERRORS = (SchemaViolation, UnknownVersion, BlobNotFound, Busy, Forbidden, ValueError, OSError, sqlite3.Error)
 
 
 @dataclass(frozen=True)
@@ -40,19 +44,33 @@ def resolve_root(root: Path | str | None) -> Path:
 
 
 class Substrate:
-    def __init__(self, root: Path | str | None = None):
+    """In-process substrate. `authorize(principal, type, subject, payload)` may raise Forbidden.
+
+    The substrate knows nothing about roles: the hook and the principal names come from the caller
+    (e.g. substrated's policy file). With no hook, or no principal, writes are unrestricted.
+    """
+
+    def __init__(self, root: Path | str | None = None, *, authorize=None):
+        self._authorize = authorize
         self.root = resolve_root(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._store = Store(self.root / "events.sqlite")
         self._blobs = Blobs(self.root)
 
     # ── write ──────────────────────────────────────────────────────────
-    def put_blob(self, data: bytes) -> str:
+    def _check(self, principal: str | None, type: str, subject: str, payload: dict) -> None:
+        if self._authorize is not None and principal is not None:
+            self._authorize(principal, type, subject, payload)
+
+    def put_blob(self, data: bytes, *, principal: str | None = None) -> str:
+        self._check(principal, "blob", "", {})
         return self._blobs.put(data)
 
     def append(self, type: str, payload: dict, *, subject: str, actor: dict,
-               cause: str | None = None, type_v: int | None = None) -> str:
-        return self._store.append(type, payload, subject=subject, actor=actor, cause=cause, type_v=type_v)
+               cause: str | None = None, type_v: int | None = None, principal: str | None = None,
+               id: str | None = None) -> str:
+        self._check(principal, type, subject, payload)
+        return self._store.append(type, payload, subject=subject, actor=actor, cause=cause, type_v=type_v, id=id)
 
     # ── projections ────────────────────────────────────────────────────
     def frontier(self, benchmark: str, *, k: int = 20, verifier: str | None = None,

@@ -1,0 +1,40 @@
+{
+  "_comment": "Which Unix user is which role, and what each role may append. Everyone may read. A constraint {field: [values]} requires payload[field] to be one of the values. 'blob' allows put_blob.",
+  "users": {
+    "rl-worker": "worker",
+    "rl-verifier": "verifier",
+    "rl-seed": "seed",
+    "substrate": "substrate"
+  },
+  "roles": {
+    "worker": {
+      "blob": true,
+      "append": {
+        "attempt.announced": {},
+        "program.committed": {},
+        "island.joined": {"via": ["submit"]},
+        "budget.spent": {"pool": ["qwen"]}
+      }
+    },
+    "verifier": {
+      "blob": true,
+      "append": {
+        "candidate.measured": {},
+        "candidate.rejected": {},
+        "budget.spent": {"pool": ["cpu"]}
+      }
+    },
+    "seed": {
+      "blob": true,
+      "append": {
+        "island.created": {},
+        "program.committed": {},
+        "island.joined": {"via": ["seed"]}
+      }
+    },
+    "substrate": {
+      "blob": false,
+      "append": {"schema.registered": {}}
+    }
+  }
+}
