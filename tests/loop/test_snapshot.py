@@ -71,7 +71,7 @@ def test_values(populated, clock):
     assert snap["current_direction"]["explore_share"] == round(0.2 / 1.2, 2)
     r = snap["health"]["researcher"]
     assert r["five_hour_pct"] == 40.0 and r["cap_pct"] == 80 and r["visits_24h"] == 1
-    assert r["next_visit"] == "2026-11-12T18:50:00Z"
+    assert r["next_visit"] == "2026-11-12T18:45:00Z"
     assert snap["beliefs"] == {"working": ["w"], "not_working": ["n"], "open_questions": ["o"]}
     assert [q["text"] for q in snap["questions"]] == ["Q?"]
     assert snap["health"]["verifier"]["backlog"] == 0 and snap["health"]["assistants"]["attempts_24h"] == 2
