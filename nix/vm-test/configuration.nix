@@ -26,6 +26,7 @@
     model.name = "fake-model";
     verifier.maxWorkers = 6;
     verifier.salts = [ 1 ];
+    researcher.enable = false;   # no Claude login in the VM
   };
 
   # Fake model for smoke tests (served from the loop's own checkout)

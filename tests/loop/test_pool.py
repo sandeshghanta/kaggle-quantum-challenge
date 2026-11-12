@@ -111,3 +111,12 @@ def test_rejected_programs_are_not_picked(sub):  # review I4
         sub.append("candidate.rejected", {"program": bad, "reason": "duplicate"}, subject="prog:" + bad, actor=ACTOR)
     rng = random.Random(0)
     assert {pool.pick_parent(sub, "main", rng) for _ in range(200)} == {good}
+
+
+def test_island_config_event_is_latest_created_or_updated(sub):
+    created = sub.since(None, types=["island.created"])[0][0].id
+    assert pool.island_config_event(sub, "main") == created
+    upd = sub.append("island.updated", {"island": "main", "weight": 2.0}, subject="bench:invsqrt", actor=ACTOR)
+    sub.append("island.updated", {"island": "other", "weight": 2.0}, subject="bench:invsqrt", actor=ACTOR)
+    assert pool.island_config_event(sub, "main") == upd
+    assert pool.island_config_event(sub, "nope") is None

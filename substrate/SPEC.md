@@ -82,12 +82,13 @@ against the payload is deferred.)
 | Type | Means | Subject (convention) |
 |---|---|---|
 | `program.committed` | code that builds circuits exists | `prog:{blob}` |
-| `candidate.measured` | a circuit got a full verification | `prog:{program}` |
+| `candidate.measured` | a circuit got a full verification (`verifier` and `cost_basis` are required) | `prog:{program}` |
 | `candidate.rejected` | an attempt stopped before a full verification | `prog:{program}` |
 | `budget.spent` | a resource was consumed | `pool:{pool}` |
 | `quota.observed` | Claude plan usage as last reported | `pool:claude` |
 | `attempt.announced` | a lab assistant's one-line plan | `prog:` (parent) |
-| `direction` | one researcher decision, with why and a prediction | `bench:` |
+| `researcher.visited` | a researcher visit began; every decision of the visit has it as `cause` | `bench:` |
+| `direction` | one researcher decision, with why and a checkable prediction (`metric` `island_best_cost` / `bench_best_cost`, `island`, `threshold`, `by_attempts` counted in `attempt.announced` events after the direction) | `bench:` |
 | `island.created` / `island.updated` | island opened / changed | `bench:` |
 | `island.joined` | a program joined an island | `prog:{program}` |
 | `lessons.published` | the researcher's current beliefs | `bench:` |
