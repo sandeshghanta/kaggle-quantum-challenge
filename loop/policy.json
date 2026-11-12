@@ -4,6 +4,7 @@
     "rl-worker": "worker",
     "rl-verifier": "verifier",
     "rl-seed": "seed",
+    "rl-live": "live",
     "substrate": "substrate"
   },
   "roles": {
@@ -31,6 +32,10 @@
         "program.committed": {},
         "island.joined": {"via": ["seed"]}
       }
+    },
+    "live": {
+      "blob": false,
+      "append": {}
     },
     "substrate": {
       "blob": false,
