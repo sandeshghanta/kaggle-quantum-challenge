@@ -22,20 +22,17 @@ work to the cheapest resource that can do it.
 
 | Resource | Cost | Used for |
 |---|---|---|
-| Local Qwen on a DGX Spark | free, 24/7, decode-bandwidth bound | thousands of small program edits |
+| Local Qwen on a DGX Spark | free | thousands of small program edits |
 | Local CPU (16-core NixOS VM) | free | building circuits and verifying them exactly |
-| Claude Opus on a $20 Pro plan | scarce: a 5-hour window plus a weekly cap, shared with the human | a few decisions a day: which ideas to pursue, what has been learned |
+| Claude Opus on a $20 Pro plan | scarce: a 5-hour window plus a weekly cap | a few decisions a day: which ideas to pursue, what has been learned |
 | The human | scarcest | steering, and submitting to Kaggle |
 
 Consequences that shape everything below:
 
 - Judgement is never delegated to a model that can be wrong. A candidate counts only if the
   verifier says so, and the verifier is exact.
-- Output tokens are the scarce Qwen resource (aggregate decode saturates around 140 tokens/s, best
-  at 8 concurrent requests), so assistants make targeted search/replace edits instead of rewriting
-  files.
-- The Claude budget is a hard stop, not a soft one. The researcher runs a few times a day and only
-  when a reserve is left for the human's own Claude use.
+- The Claude budget is a hard stop, not a soft one. The researcher runs a few times a day and uses
+  at most 80% of either plan limit; the last 20% is kept as a backup.
 - The loop is disposable; the event log is not. All durable state lives in the substrate, so the
   loop can be rewritten without losing history.
 
@@ -219,8 +216,8 @@ so it runs a few times a day, never more than a fixed schedule allows.
 - **Budget gate.** Plan usage arrives only with a response, so there is no free pre-check. After
   every Claude run the researcher service appends `quota.observed`; before a visit it reads the
   latest one. If that observation is past its reset time the window is assumed fresh; otherwise a
-  visit is allowed only if the five-hour and weekly used-percentages are below thresholds that
-  keep a reserve (default 30%) for the human.
+  visit is allowed only if the five-hour and weekly used-percentages are both below 80%; the last
+  20% is kept as a backup.
 - **Digest.** Input is a digest built by code, not by the model exploring the repo: frontier and
   trend per island, past directions and outcomes, recent failure patterns, assistant hit rate,
   budget state, and new human instructions.
