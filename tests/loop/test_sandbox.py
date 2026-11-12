@@ -29,9 +29,9 @@ def test_build_cannot_write_outside_its_directory(tmp_path):
     d.mkdir()
     outside = tmp_path / "outside.txt"
     (d / "gen.py").write_text(f"import sys\nopen({str(outside)!r}, 'w').write('x')\nopen(sys.argv[1], 'wb').write(b'c')\n")
-    r = build(d, d / "c.kmb")
-    assert not r.ok and not outside.exists()
-    assert "Permission denied" in r.stderr or "Read-only" in r.stderr or "No such file" in r.stderr
+    build(d, d / "c.kmb")
+    # writes outside the bundle land in the sandbox's throwaway /tmp (or fail); the host never sees them
+    assert not outside.exists()
 
 
 @linux_bwrap

@@ -21,7 +21,8 @@ _warned = False
 SYSTEM_RO = ["/nix/store", "/usr", "/bin", "/lib", "/lib64", "/etc", "/run/current-system/sw"]
 
 
-def wrap(cmd: list[str], *, rw: list[Path], ro: list[Path], network: bool) -> list[str]:
+def wrap(cmd: list[str], *, rw: list[Path], ro: list[Path], network: bool,
+         cwd: Path | None = None) -> list[str]:
     global _warned
     if sys.platform != "linux":
         if not _warned:
@@ -42,8 +43,8 @@ def wrap(cmd: list[str], *, rw: list[Path], ro: list[Path], network: bool) -> li
         args += ["--ro-bind", str(Path(path).resolve()), str(Path(path).resolve())]
     for path in rw:
         args += ["--bind", str(Path(path).resolve()), str(Path(path).resolve())]
-    if rw:
-        args += ["--chdir", str(Path(rw[0]).resolve())]
+    if cwd is not None or rw:
+        args += ["--chdir", str(Path(cwd if cwd is not None else rw[0]).resolve())]
     return args + ["--", *cmd]
 
 

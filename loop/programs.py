@@ -67,7 +67,8 @@ def build(bundle_dir: Path, out_kmb: Path, *, timeout: float = 120) -> BuildResu
     out_kmb.unlink(missing_ok=True)
     start = time.monotonic()
     cmd = sandbox.wrap([sys.executable, "-I", "gen.py", str(out_kmb)],
-                       rw=sorted({Path(bundle_dir), out_kmb.parent}), ro=sandbox.python_paths(), network=False)
+                       rw=sorted({Path(bundle_dir), out_kmb.parent}), ro=sandbox.python_paths(), network=False,
+                       cwd=Path(bundle_dir))
     proc = subprocess.Popen(cmd, cwd=bundle_dir,
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                             start_new_session=True)
