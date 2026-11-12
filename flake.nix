@@ -34,7 +34,5 @@
             } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux { LD_LIBRARY_PATH = tc.libraryPath; };
           };
         });
-
-      nixosModules.default = import ./nix/module.nix { inherit pi toolchain; };
     };
 }

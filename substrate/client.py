@@ -1,4 +1,4 @@
-"""RemoteSubstrate: the Substrate API over substrated's Unix socket.
+"""RemoteSubstrate: the Substrate API over substrated (Unix socket, or HTTP with a role token).
 
 Same methods and return types as the in-process Substrate. Connection failures and 503 (Busy) are
 retried with backoff for up to `retry_s` seconds, so callers survive a substrated restart. Appends
@@ -12,6 +12,7 @@ import json
 import socket
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from substrate import _ulid
 from substrate._blobs import BlobNotFound
@@ -37,17 +38,31 @@ class _UnixHTTPConnection(http.client.HTTPConnection):
 
 
 class RemoteSubstrate:
-    def __init__(self, socket_path: Path | str, *, retry_s: float = 60.0, timeout: float = 300.0):
-        self.socket_path = str(socket_path)
+    def __init__(self, socket_path: Path | str | None = None, *, url: str | None = None, token: str | None = None,
+                 retry_s: float = 60.0, timeout: float = 300.0):
+        """Either `socket_path` (Unix socket) or `url` ("http://host:port", with the role `token`)."""
+        if (socket_path is None) == (url is None):
+            raise ValueError("give exactly one of socket_path and url")
+        self.socket_path = str(socket_path) if socket_path is not None else None
+        self.url = urlsplit(url) if url else None
+        self.token = token
         self.retry_s = retry_s
         self.timeout = timeout
 
     # ── transport ──────────────────────────────────────────────────────
+    def _connection(self) -> http.client.HTTPConnection:
+        if self.url is not None:
+            return http.client.HTTPConnection(self.url.hostname, self.url.port or 80, timeout=self.timeout)
+        return _UnixHTTPConnection(self.socket_path, self.timeout)
+
     def _request(self, method: str, path: str, body, raw: bool = False):
-        conn = _UnixHTTPConnection(self.socket_path, self.timeout)
+        conn = self._connection()
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         try:
             data = body if raw or body is None else json.dumps(body, allow_nan=False).encode()
-            conn.request(method, path, body=data, headers={"Content-Type": "application/json"})
+            conn.request(method, path, body=data, headers=headers)
             resp = conn.getresponse()
             payload = resp.read()
         finally:

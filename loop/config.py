@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import os
 import socket
 import subprocess
 from importlib import metadata
@@ -23,6 +24,9 @@ def verifier_tag() -> str:
 
 @functools.cache
 def git_sha() -> str:
+    """The loop code's commit: $LOOP_GIT_SHA (set at image build time) or the checkout's HEAD."""
+    if os.environ.get("LOOP_GIT_SHA"):
+        return os.environ["LOOP_GIT_SHA"]
     try:
         out = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True, timeout=5)

@@ -12,10 +12,11 @@ USAGE = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
 
 class FakeOpenAI:
     def __init__(self, script: list[dict] | None = None, *, delay: float = 0.0, auto_edit: str | None = None,
-                 port: int = 0):
+                 port: int = 0, host: str = "127.0.0.1"):
         self.script = list(script or [])
         self.auto_edit = auto_edit
         self.port = port
+        self.host = host
         self.delay = delay
         self.requests: list[dict] = []
         self._lock = threading.Lock()
@@ -81,8 +82,8 @@ class FakeOpenAI:
                     self.end_headers()
                     self.wfile.write(body)
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
-        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+        self.server = ThreadingHTTPServer((self.host, self.port), Handler)
+        self.base_url = f"http://{self.host}:{self.server.server_address[1]}/v1"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         return self
 
@@ -95,9 +96,10 @@ def main() -> None:
     import argparse
     p = argparse.ArgumentParser(description="Fake OpenAI server for smoke tests")
     p.add_argument("--port", type=int, default=8099)
+    p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--auto-edit", default="import argparse", help="text in gen.py to tweak on each job")
     args = p.parse_args()
-    with FakeOpenAI(auto_edit=args.auto_edit, port=args.port) as fake:
+    with FakeOpenAI(auto_edit=args.auto_edit, port=args.port, host=args.host) as fake:
         print(f"fake model on {fake.base_url}", flush=True)
         threading.Event().wait()
 

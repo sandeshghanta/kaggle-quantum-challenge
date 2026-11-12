@@ -111,9 +111,19 @@ def claude_usage(quota: list, now: datetime) -> dict:
     return out
 
 
+def read_launcher(path: Path | None) -> dict | None:
+    """launcher.json from the job launcher (Compose deployments), or None."""
+    if path is None:
+        return None
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def alerts(*, workers: list, verifier: dict, last_visit: datetime | None, claude: dict, monitor: Monitor | None,
-           now: datetime) -> list[dict]:
-    """The eight alert rules. Each fires while its condition holds; there is no history and no notification."""
+           now: datetime, launcher: dict | None = None, launcher_expected: bool = False) -> list[dict]:
+    """The alert rules. Each fires while its condition holds; there is no history and no notification."""
     out = []
 
     def fire(rule, text):
@@ -123,6 +133,14 @@ def alerts(*, workers: list, verifier: dict, last_visit: datetime | None, claude
         age = now - _parse(w["updated_at"])
         if age >= WORKER_DOWN_AFTER:
             fire("worker_down", f"Worker {w.get('worker')}: no heartbeat for {age.total_seconds() / 60:.0f} min")
+    if launcher_expected:
+        age = now - _parse(launcher["updated_at"]) if launcher else None
+        if age is None or age >= STALE_AFTER:
+            fire("worker_down", "Job launcher is not running: no lab assistants are being started")
+        else:
+            for s in launcher.get("slots", []):
+                if s.get("state") == "backoff":
+                    fire("worker_down", f"Job slot {s['slot']} backing off: last job exited {s.get('last_exit')}")
     if monitor is not None and monitor.qwen_down_since and now - monitor.qwen_down_since >= QWEN_DOWN_AFTER:
         fire("qwen_unreachable", f"Qwen unreachable for {(now - monitor.qwen_down_since).total_seconds() / 60:.0f} min")
     if verifier["backlog"] > BACKLOG_MAX or verifier["oldest_wait_min"] > OLDEST_WAIT_MAX_MIN:
@@ -149,8 +167,10 @@ def alerts(*, workers: list, verifier: dict, last_visit: datetime | None, claude
     return out
 
 
-def build_live(sub, *, heartbeats_dir: Path | None, now: datetime, monitor: Monitor | None = None) -> dict:
+def build_live(sub, *, heartbeats_dir: Path | None, now: datetime, monitor: Monitor | None = None,
+               launcher_status: Path | None = None) -> dict:
     tag, basis = config.verifier_tag(), config.COST_BASIS
+    launcher = read_launcher(launcher_status)
     events, _ = sub.since(None, types=TYPES, limit=-1)
     cutoff = now - WINDOW
 
@@ -297,8 +317,9 @@ def build_live(sub, *, heartbeats_dir: Path | None, now: datetime, monitor: Moni
         "claude": claude,
         "last_visit": _iso(last_visit) if last_visit else None,
         "hardware": hw,
+        "launcher": launcher,
         "alerts": alerts(workers=workers, verifier=verifier, last_visit=last_visit, claude=claude, monitor=monitor,
-                         now=now),
+                         now=now, launcher=launcher, launcher_expected=launcher_status is not None),
     }
 
 
@@ -316,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--substrate", "--root", dest="substrate", required=True,
                    help="data directory (in-process) or unix:/run/substrate/api.sock")
     p.add_argument("--heartbeats", help="directory of worker-<id>.json heartbeats")
+    p.add_argument("--launcher-status", help="launcher.json of the job launcher (Compose deployments)")
     p.add_argument("--out", required=True, help="where to write live.json")
     p.add_argument("--history", help="where to write history.json (5-minute machine metrics, last 7 days)")
     p.add_argument("--qwen-base-url", help="Qwen's OpenAI-compatible base URL; its /metrics is sampled")
@@ -341,7 +363,9 @@ def main(argv: list[str] | None = None) -> int:
         now = datetime.now(UTC)
         try:
             history.add(now, monitor.sample(now), mem_total_gib=monitor.mem_total_gib)
-            write_atomic(Path(args.out), build_live(sub, heartbeats_dir=hb, now=now, monitor=monitor))
+            write_atomic(Path(args.out), build_live(
+                sub, heartbeats_dir=hb, now=now, monitor=monitor,
+                launcher_status=Path(args.launcher_status) if args.launcher_status else None))
         except Exception as e:  # keep the last good file; try again next tick
             print(f"live: update failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         if args.once:

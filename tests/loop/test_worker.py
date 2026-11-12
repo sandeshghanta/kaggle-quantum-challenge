@@ -40,7 +40,7 @@ PASS = CheckReport(True, "ok", None, qubits=40, toffolis=100.0, cost_estimate=40
 def fast_check(monkeypatch, request):
     """The worker's final gate, faked (fast); tests marked real_check use the actual build + sample check."""
     if "real_check" not in request.keywords:
-        monkeypatch.setattr(worker, "check_bundle", lambda bundle: PASS)
+        monkeypatch.setattr(worker, "check_bundle", lambda bundle, **kw: PASS)
 
 
 def only(sub, t):
@@ -165,7 +165,7 @@ def test_no_status_dir_writes_nothing(sub, cfg, tmp_path, monkeypatch):
 
 # ── the gate after the job ─────────────────────────────────────────────
 def gate_with(monkeypatch, report):
-    monkeypatch.setattr(worker, "check_bundle", lambda bundle: report)
+    monkeypatch.setattr(worker, "check_bundle", lambda bundle, **kw: report)
 
 
 def test_failing_final_check_abandons_with_the_error(sub, cfg, tmp_path, monkeypatch):
@@ -305,3 +305,26 @@ def test_prompt_carries_in_progress_and_successes(sub, cfg, tmp_path, monkeypatc
     worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
     assert "In progress right now on this island" in seen["prompt"] and "- merge the two lookups" in seen["prompt"]
     assert "Recently worked on this island" in seen["prompt"] and "plan" in seen["tools"]
+
+
+@pytest.mark.real_check
+def test_commit_carries_the_circuit_the_final_check_built(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    c = only(sub, "program.committed")[-1].payload
+    assert c["circuit"].startswith("sha256:") and len(sub.get_blob(c["circuit"])) > 1000
+
+
+def test_once_mode_exit_codes(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "connect", lambda target: sub)
+    args = ["--substrate", "x", "--id", "1", "--base-url", "http://h/v1", "--model", "m", "--api-key-env", "K",
+            "--workroot", str(tmp_path / "w"), "--once"]
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False))
+    assert worker.main(args) == 0
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False, ok=False, error="connection refused"))
+    assert worker.main(args) == worker.EXIT_FAILED
+
+    def nothing(*a, **k):
+        raise LookupError("no islands yet")
+    monkeypatch.setattr(worker, "run_job", nothing)
+    assert worker.main(args) == worker.EXIT_WAITING

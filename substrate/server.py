@@ -1,9 +1,11 @@
-"""substrated: the substrate as a service on a Unix socket, with OS-attested callers.
+"""substrated: the substrate as a service, with authenticated callers.
 
-The server is the only process that can open the event log and blobs. Each request's caller is
-identified by its Unix uid (SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS), mapped to a user name,
-then to a role via the policy. The server stamps `actor.role` itself, so a caller cannot claim to
-be someone else. The policy decides what each role may write; everyone may read.
+The server is the only process that can open the event log and blobs. It listens either on a Unix
+socket, where each caller is identified by its Unix uid (SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS)
+mapped to a user and then a role via the policy, or on TCP, where each caller presents a role token
+(`Authorization: Bearer <token>`; tokens are files named after their role, e.g. Compose secrets in
+/run/secrets). Either way the server stamps `actor.role` itself, so a caller cannot claim to be someone
+else. The policy decides what each role may write; every authenticated caller may read.
 
 Protocol: JSON over HTTP/1.1.
   POST /v1/<method>   body = JSON object of keyword arguments (append, since, history, frontier,
@@ -18,6 +20,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import grp
+import hmac
 import json
 import os
 import pwd
@@ -87,8 +90,27 @@ class _Server(socketserver.ThreadingUnixStreamServer):
     allow_reuse_address = True
 
 
-def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_lookup, user_groups=group_lookup,
-                max_body: int = 64 << 20) -> _Server:
+class _TCPServer(socketserver.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def load_tokens(directory: Path, roles) -> dict[str, str]:
+    """{token: role} from files named after roles; roles without a file are skipped. Empty tokens are refused."""
+    out = {}
+    for role in roles:
+        path = Path(directory) / role
+        if path.is_file():
+            token = path.read_text().strip()
+            if len(token) < 16:
+                raise ValueError(f"token for role {role!r} is shorter than 16 characters")
+            out[token] = role
+    return out
+
+
+def make_server(socket_path: Path | None, root: Path, *, policy=None, uid_to_user=pwd_lookup,
+                user_groups=group_lookup, max_body: int = 64 << 20, listen: tuple[str, int] | None = None,
+                tokens: dict[str, str] | None = None):
     sub = Substrate(root, authorize=policy.authorize if policy else None)
     sub.init()
 
@@ -119,6 +141,14 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
             """(allowed, role). Without a policy every caller is unrestricted (principal None)."""
             if policy is None:
                 return True, None
+            if tokens is not None:
+                auth = self.headers.get("Authorization") or ""
+                presented = auth[len("Bearer "):].strip() if auth.startswith("Bearer ") else ""
+                role = None
+                for token, r in tokens.items():  # compare against every token: no early exit to time
+                    if presented and hmac.compare_digest(presented.encode(), token.encode()):
+                        role = r
+                return role is not None, role
             uid = peer_uid(self.connection)
             user = uid_to_user(uid) if uid is not None else None
             role = policy.role_for(user, user_groups(user) if user else []) if user else None
@@ -202,6 +232,10 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
             except Exception as e:
                 self._error(e)
 
+    if listen is not None:
+        if policy is not None and tokens is None:
+            raise ValueError("a TCP listener with a policy needs role tokens")
+        return _TCPServer(listen, Handler)
     socket_path = Path(socket_path)
     socket_path.unlink(missing_ok=True)
     srv = _Server(str(socket_path), Handler)
@@ -211,16 +245,27 @@ def make_server(socket_path: Path, root: Path, *, policy=None, uid_to_user=pwd_l
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--socket", required=True)
+    where = p.add_mutually_exclusive_group(required=True)
+    where.add_argument("--socket", help="Unix socket path (callers identified by uid)")
+    where.add_argument("--listen", help="host:port for TCP (callers identified by role token; needs --tokens-dir)")
     p.add_argument("--root", required=True)
     p.add_argument("--policy", help="role policy JSON (loop/policy.json); omit for an unrestricted dev server")
+    p.add_argument("--tokens-dir", help="directory of role token files named after roles (e.g. /run/secrets)")
     args = p.parse_args(argv)
     pol = None
     if args.policy:
         from loop import policy as policy_mod
         pol = policy_mod.load(Path(args.policy))
-    srv = make_server(Path(args.socket), Path(args.root), policy=pol)
-    print(f"substrated: serving {args.root} on {args.socket}", flush=True)
+    if args.listen:
+        host, _, port = args.listen.rpartition(":")
+        if pol is not None and not args.tokens_dir:
+            p.error("--listen with --policy needs --tokens-dir")
+        tokens = load_tokens(Path(args.tokens_dir), pol.roles) if pol is not None else None
+        srv = make_server(None, Path(args.root), policy=pol, listen=(host or "0.0.0.0", int(port)), tokens=tokens)
+        print(f"substrated: serving {args.root} on {args.listen} ({len(tokens or {})} role tokens)", flush=True)
+    else:
+        srv = make_server(Path(args.socket), Path(args.root), policy=pol)
+        print(f"substrated: serving {args.root} on {args.socket}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

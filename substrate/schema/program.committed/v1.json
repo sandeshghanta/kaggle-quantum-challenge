@@ -33,6 +33,11 @@
     "note": {
       "type": "string",
       "description": "Optional free text from the author — what was changed and why, one or two sentences. Not validated, not parsed. Useful in digests, since it is far cheaper than diffing source."
+    },
+    "circuit": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Optional digest of the circuit the author built from this program. When present, the verifier scores this circuit instead of running the generator itself (so model-written code never runs where the verifier's credentials are)."
     }
   }
 }

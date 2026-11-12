@@ -142,8 +142,12 @@ def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
 def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, salts: list[int],
              max_workers: int | None, workdir: Path, cause: str, full_max_x: int | None = None,
              delta: float = DELTA, audit_rate: float = AUDIT_RATE, rng: random.Random | None = None,
-             stop=_never) -> Outcome:
-    """Raises Interrupted, having recorded nothing, if `stop()` turns true while a check runs."""
+             stop=_never, circuit: str | None = None, allow_build: bool = True) -> Outcome:
+    """Raises Interrupted, having recorded nothing, if `stop()` turns true while a check runs.
+
+    `circuit`: the digest of the circuit the author uploaded with the program; scored as is, the generator is
+    not run. Without one, the generator is built only if `allow_build`.
+    """
     actor = config.actor("verifier", VERSION)
     subject = "prog:" + program
     cpu0 = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -168,17 +172,27 @@ def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, s
         return Outcome("rejected", eid, estimate.cost if estimate else None)
 
     shutil.rmtree(workdir, ignore_errors=True)
-    unpack(sub.get_blob(program), workdir)
-    built = build(workdir, workdir / "circuit.kmb", timeout=BUILD_TIMEOUT)
-    if not built.ok:
-        outcome = reject("build_failed", built.stderr or "generator exited without writing a circuit", "build")
+    workdir.mkdir(parents=True)
+    kmb, build_error = workdir / "circuit.kmb", None
+    if circuit:  # the author uploaded the circuit it built: score that, never run its generator here
+        kmb.write_bytes(sub.get_blob(circuit))
+    elif not allow_build:
+        build_error = "no circuit uploaded, and this verifier does not run generators other than seeds"
     else:
-        circuit = sub.put_blob(built.kmb.read_bytes())
+        unpack(sub.get_blob(program), workdir / "bundle")
+        built = build(workdir / "bundle", kmb, timeout=BUILD_TIMEOUT)
+        if built.ok:
+            circuit = sub.put_blob(kmb.read_bytes())
+        else:
+            build_error = built.stderr or "generator exited without writing a circuit"
+    if build_error is not None:
+        outcome = reject("build_failed", build_error, "build")
+    else:
         already = _measured_circuit(sub, circuit)
         if already is not None:
             return reject("duplicate", f"circuit identical to one already measured (program {already})",
                           "duplicate", circuit)
-        sweep = sweep_check(built.kmb, max_workers=max_workers, stop=stop)
+        sweep = sweep_check(kmb, max_workers=max_workers, stop=stop)
         worse = (island_best_sweep is not None and sweep.passes
                  and sweep.cost > island_best_sweep * (1 + delta))
         audited = worse and rng.random() < audit_rate
@@ -189,7 +203,7 @@ def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, s
                              f"sweep estimate {sweep.cost:.6g} > island best {island_best_sweep:.6g} x {1 + delta}",
                              "gate", circuit, sweep)
         else:
-            full = full_check(built.kmb, salts=salts, max_workers=max_workers, max_x=full_max_x, stop=stop)
+            full = full_check(kmb, salts=salts, max_workers=max_workers, max_x=full_max_x, stop=stop)
             cost = full.cost if full.cost is not None else sweep.cost
             metrics = full.metrics | {"sweep_cost": sweep.cost}
             if audited:

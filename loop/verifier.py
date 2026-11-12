@@ -9,7 +9,7 @@ from pathlib import Path
 
 from datetime import UTC, datetime
 
-from loop import config, pool, verify
+from loop import config, pool, sandbox, verify
 from loop.state import load_cursor, save_cursor
 from loop.verify import evaluate
 from substrate import connect
@@ -54,7 +54,10 @@ def run_once(sub: Substrate, *, state_path: Path, workdir: Path, salts: list[int
         try:
             evaluate(sub, program, island_best_sweep=island_best_sweep(sub, program), salts=salts,
                      max_workers=max_workers, workdir=workdir, cause=ev.id, full_max_x=full_max_x,
-                     delta=delta, audit_rate=audit_rate, rng=rng, stop=stop)
+                     delta=delta, audit_rate=audit_rate, rng=rng, stop=stop,
+                     circuit=ev.payload.get("circuit"),
+                     # in a container there is no inner sandbox: run only our own seed generators
+                     allow_build=not sandbox.in_container() or ev.actor.get("role") == "seed")
         except verify.Interrupted:
             return done  # stopping: nothing recorded and the cursor stays before this program, so it is redone
         except Exception as e:  # never loop on one program: record it and move on

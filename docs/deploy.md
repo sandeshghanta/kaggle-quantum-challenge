@@ -1,146 +1,102 @@
-# Deploying the research loop to the devbox
+# Deploying the research loop
 
-The devbox (NixOS 26.05, x86_64, config in `DotFiles/personal/nixos/devbox/`) imports this
-repo's NixOS module. Nix provides the toolchain and systemd units; the loop code runs from a
-git checkout under `/var/lib/research-loop/repo`, so code updates never need a rebuild.
+The loop is a Docker Compose project in this repo. The host (the devbox) needs only a container
+runtime and Tailscale; nothing about the loop lives in the host's own configuration. The design is
+in [`docs/design/compose.md`](design/compose.md).
 
-The same module was proven end to end in a local NixOS VM (`nix/vm-test/`): fresh clone from
-GitHub, seed, two workers, verifier, drain-on-stop, `research-loop-update`.
+## 1. Host prerequisites (devbox, NixOS)
 
-## 1. Add the flake input (DotFiles, devbox)
-
-`personal/nixos/devbox/flake.nix`:
+In the devbox's `configuration.nix` (DotFiles), enable Docker and let your user run it:
 
 ```nix
-inputs = {
-  nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-  research-loop.url = "github:sandeshghanta/kaggle-quantum-challenge";
-  research-loop.inputs.nixpkgs.follows = "nixpkgs";
-};
-
-outputs = { self, nixpkgs, research-loop, ... }: {
-  nixosConfigurations.devbox = nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    modules = [ ./configuration.nix research-loop.nixosModules.default ];
-  };
-};
+virtualisation.docker.enable = true;
+users.users.<you>.extraGroups = [ "docker" ];
 ```
 
-This is additive; it touches nothing on the do-not-touch list in `devbox/AGENTS.md`.
+Rootless Podman works too (`virtualisation.podman.enable = true; dockerCompat = true;` plus the user
+socket); set `CONTAINER_SOCKET` in `.env` to `/run/user/<uid>/podman/podman.sock`.
 
-## 2. Enable the service (`configuration.nix`)
-
-```nix
-services.research-loop = {
-  enable = true;
-  repo.url = "https://github.com/sandeshghanta/kaggle-quantum-challenge.git";
-  repo.ref = "main";
-  workers = 8;                       # Spark's sweet spot: 8 concurrent requests
-  viewers = [ "sandeshg" ];          # your own user may read the substrate (read-only)
-  model.baseUrl = "http://spark-9a7e.stalk-rudd.ts.net:8000/v1";
-  model.name = "nvidia/Qwen3.8-Flash-Next-FP4-Local";
-  model.contextWindow = 32768;
-  model.egressAllow = [ "<spark tailnet IP>" ];   # workers may reach only the Spark (and localhost DNS)
-  verifier.maxWorkers = 12;          # leave a few of the 16 cores for workers and the OS
-  verifier.salts = [ 1 2 3 4 ];
-};
-```
-
-The Spark endpoint needs no key, so `model.apiKeyFile` stays unset. The repo is public, so no
-deploy key is needed.
-
-**Worker egress.** Lab assistants run model-written code, so `model.egressAllow` limits the worker
-units to the listed addresses. Find the Spark's address with `tailscale ip -4 spark-9a7e`. The filter is
-systemd's per-unit IP filter, enforced in the kernel for every process in the unit, including the
-sandboxed jobs. Localhost stays allowed because DNS goes through dnsmasq on 127.0.0.1. If the Spark's
-tailnet IP ever changes, workers fail with connection timeouts until the option is updated.
-
-**Run exactly one verifier.** The module defines a single `research-loop-verifier` unit on
-purpose: nothing claims a program before verifying it, so a second instance would score every
-program twice.
-
-## 3. Rebuild
+## 2. Configure
 
 ```sh
-cd ~/workplace/DotFiles && git pull
-sudo nixos-rebuild switch --flake ~/workplace/DotFiles/personal/nixos/devbox#devbox
-git commit -am "devbox: research loop" && git push
+git clone https://github.com/sandeshghanta/kaggle-quantum-challenge.git && cd kaggle-quantum-challenge
+cp .env.example .env          # then edit it
+scripts/init-secrets          # one random token per role in secrets/ (git-ignored); appends SECRETS_DIR to .env
 ```
 
-On first activation: `research-loop-checkout` clones the repo and runs `uv sync`,
-`research-loop-seed` registers schemas and seeds the reference generator, then the verifier and
-`research-loop-worker@1..8` start under `research-loop.target`.
+Settings in `.env`:
 
-## 3b. Researcher login (one-time human step)
+| Variable | Meaning |
+|---|---|
+| `SPARK_ADDR` | `host:port` of Qwen on the Spark, e.g. `100.95.29.126:8000`; the only address job containers can reach |
+| `MODEL_NAME`, `MODEL_CONTEXT_WINDOW` | the served model |
+| `WORKERS` | lab-assistant job slots (8 matches the Spark's sweet spot) |
+| `VERIFIER_MAX_WORKERS` | verifier processes (leave a few of the 16 cores free) |
+| `STATUS_BIND` | the devbox's Tailscale IP (`tailscale ip -4`), so only the tailnet reaches the status page |
+| `GIT_SHA` | stamped on every event; `export GIT_SHA=$(git rev-parse --short HEAD)` before building |
 
-The researcher is Claude Opus on the owner's Claude Pro plan, driven through the `pi-claude-bridge`
-extension. After the first rebuild, `research-loop-researcher-setup` installs Claude Code and the extension
-into `/var/lib/research-loop/researcher` (the researcher's persistent home). Then log in once, before the
-researcher service can work:
+## 3. Start
 
 ```sh
-sudo -u rl-researcher -H claude auth login     # or the helper: sudo research-loop-researcher-login
-sudo systemctl restart research-loop-researcher
+export GIT_SHA=$(git rev-parse --short HEAD)
+docker compose up -d --build
+docker compose run --rm researcher scripts/researcher.sh login    # once: Claude Pro login
+docker compose restart researcher
 ```
 
-The login lives in that home (mode 0700). Never set `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` or
-`ANTHROPIC_AUTH_TOKEN` for the researcher: it must bill the Pro plan, and it refuses to start if one is set.
-The researcher writes `/var/lib/research-loop/status/researcher/researcher.json` (group `status-readers`).
-Set `services.research-loop.researcher.enable = false` to run without it.
+The login is kept in the `researcher-home` volume. Never set `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
+or `ANTHROPIC_AUTH_TOKEN` for the researcher: it must bill the Pro plan, and it refuses to start if one
+is set. To run without the researcher, `docker compose up -d --scale researcher=0`.
+
+Open the status page from any device on the tailnet: `http://devbox:8080`.
 
 ## 4. Operate
 
 | Task | Command |
 |---|---|
-| Status | `systemctl status 'research-loop-*'` |
-| Logs | `journalctl -u research-loop-verifier -f`, `journalctl -u 'research-loop-worker@*' -f` |
-| Update loop code | `sudo research-loop-update` (pull + `uv sync`, then queues restarts of every service and returns at once; workers and the researcher finish their current job first, the verifier abandons its check and redoes it) |
-| Pause / resume | `sudo systemctl stop research-loop.target` / `start` |
-| Fewer workers now | `sudo systemctl stop research-loop-worker@8` (persist by changing `workers`) |
-| Query results | `sudo -u rl-verifier env PYTHONPATH=/var/lib/research-loop/repo /var/lib/research-loop/repo/.venv/bin/python -c "from substrate.client import RemoteSubstrate as R; print(R('/run/substrate/api.sock').frontier('invsqrt'))"` |
+| Status | `docker compose ps`; job containers: `docker ps --filter label=research-loop.job` |
+| Logs | `docker compose logs -f verifier launcher researcher`; the launcher also logs each finished job's last lines |
+| Update | `git pull && export GIT_SHA=$(git rev-parse --short HEAD) && docker compose up -d --build` |
+| Pause / resume | `docker compose stop` / `docker compose start` |
+| Change worker count | edit `WORKERS` in `.env`, then `docker compose up -d launcher` |
+| Query results | `docker compose exec substrate python -m substrate.cli --root /data frontier invsqrt` |
+| Back up | `docker compose exec substrate python -m substrate.cli --root /data export /data/export.jsonl`, then `docker compose cp substrate:/data/export.jsonl .` |
 
-Data lives in `/var/lib/research-loop/substrate` (event log + blobs). Back it up with
-`substrate.cli export`.
+Stopping is safe at any time. A stopped lab-assistant job is abandoned (its announcement stays as an
+orphan), the verifier redoes the program it was checking, and the researcher finishes its visit
+first (up to 16 minutes).
 
-## 5. Open the progress page
+## 5. Moving from the NixOS module
 
-The page is served on the devbox itself, only to the tailnet. From any device on the tailnet
-(laptop or phone with Tailscale on) open:
+The loop used to run as `services.research-loop` systemd units. To move with the existing history:
 
-    http://devbox:8080
-
-The module runs two small units under `research-loop.target`: `research-loop-live` (user `rl-live`)
-rewrites `live.json` every 15 s from the substrate, the worker heartbeats, the devbox's `/proc` and
-Qwen's `/metrics` (derived from `model.baseUrl`), keeps 7 days of 5-minute machine metrics in
-`history.json`, and
-`research-loop-statuspage` (user `rl-status`) serves the page. The page also reads
-`researcher.json`, written only by the researcher service; until the first researcher visit it shows
-"No researcher visit yet". The live updater and the researcher have separate files and never touch
-each other's output.
-
-The port binds on all interfaces, but the firewall trusts only `tailscale0` and does not open it, so
-nothing outside the tailnet can reach it. Options:
-
-```nix
-services.research-loop.statusPage = {
-  enable = true;            # default
-  port = 8080;              # default
-  tailscaleServe = false;   # true: also https://devbox.<tailnet>.ts.net via `tailscale serve`
-};
+```sh
+sudo systemctl stop research-loop.target
+docker compose build
+docker volume create research-loop_substrate-data
+docker run --rm --user 0 -v /var/lib/research-loop/substrate:/src:ro -v research-loop_substrate-data:/data \
+  research-loop:local sh -c 'cp -a /src/. /data/ && chown -R 10001:10001 /data'
 ```
 
-Files live in `/var/lib/research-loop/status/{live,workers,researcher}`. Check with
-`systemctl status research-loop-live research-loop-statuspage` and
-`curl -s localhost:8080/live.json | jq .score` on the devbox. `rl-live` is a read-only role in
-`loop/policy.json`, so after updating the loop code restart `substrated` (`research-loop-update` does).
+Then remove the `research-loop` flake input, its module import and the `services.research-loop`
+block from the devbox config, enable Docker (step 1), `nixos-rebuild switch`, and continue at step 2.
+Log the researcher in again (step 3). Programs committed before the move carry no circuit, and the
+containerised verifier does not run assistants' generators, so any of them still unjudged are
+rejected as `build_failed`; the next jobs replace them.
 
 ## Security model
 
-- Each role runs as its own Unix user: `substrate`, `rl-deploy`, `rl-worker`, `rl-verifier`, `rl-seed`, `rl-live` (read-only), `rl-status` (files only).
-- Only `substrated` (user `substrate`) can open the event log and blobs in
-  `/var/lib/research-loop/substrate` (mode 0700). Everyone else talks to it over
-  `/run/substrate/api.sock`; the server identifies each caller by its Unix user and enforces
-  `loop/policy.json` (a worker cannot record measurements, the verifier cannot submit programs).
-- pi jobs and generator builds run inside bubblewrap sandboxes that can write only their own job
-  directory and cannot see the substrate socket. Builds have no network.
-- The loop code checkout is owned by `rl-deploy` and read-only for every other role.
+- Identity: each role has its own token (`secrets/<role>`, mounted as a Compose secret). The substrate
+  maps the token to the role, stamps it on every event, and enforces `loop/policy.json`: a worker
+  cannot record measurements, the verifier cannot submit programs.
+- Data: only the `substrate` service mounts the event log and blobs (the live updater mounts them
+  read-only for disk usage).
+- Model-written code runs only in lab-assistant job containers: one job per container, read-only
+  root, tmpfs work directory, no capabilities, `no-new-privileges`, CPU, memory and process limits.
+  They join only the internal `substrate` and `qwen` networks; `qwen-proxy` forwards one port to the
+  Spark and nothing else is reachable.
+- The verifier scores uploaded circuits and never runs an assistant's generator.
+- The launcher is the only service with the container runtime socket. It runs no model code, starts
+  one fixed image with fixed arguments, and takes no input from jobs. With rootless Podman that socket
+  carries one unprivileged user's rights.
+- The status page is published only on `STATUS_BIND` (the Tailscale IP).

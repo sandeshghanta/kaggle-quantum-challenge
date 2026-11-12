@@ -11,6 +11,7 @@ platforms (macOS development) run the command unchanged and warn once.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -21,9 +22,16 @@ _warned = False
 SYSTEM_RO = ["/nix/store", "/usr", "/bin", "/lib", "/lib64", "/etc", "/run/current-system/sw"]
 
 
+def in_container() -> bool:
+    """LOOP_SANDBOX=container: this process runs in a disposable job container, which is the sandbox."""
+    return os.environ.get("LOOP_SANDBOX") == "container"
+
+
 def wrap(cmd: list[str], *, rw: list[Path], ro: list[Path], network: bool,
          cwd: Path | None = None) -> list[str]:
     global _warned
+    if in_container():
+        return list(cmd)
     if sys.platform != "linux":
         if not _warned:
             log.warning("bubblewrap is Linux-only; running model-written code unsandboxed on %s", sys.platform)

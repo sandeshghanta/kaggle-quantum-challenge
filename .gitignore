@@ -2,3 +2,5 @@
 var/
 .venv/
 __pycache__/
+secrets/
+.env

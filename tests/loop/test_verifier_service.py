@@ -113,3 +113,54 @@ def test_stop_callable_reaches_evaluate(tmp_path, sub, monkeypatch):
     verifier.run_once(sub, state_path=tmp_path / "cursor", workdir=tmp_path / "work", salts=[1],
                       max_workers=None, stop=lambda: False)
     assert callable(seen.get("stop"))
+
+
+# ── circuits uploaded by the author; no generator runs in container mode ──
+def reference_circuit(sub, tmp_path):
+    from loop.programs import build
+    from tests.loop.test_verify import REFERENCE
+    d = tmp_path / "ref"
+    d.mkdir()
+    (d / "gen.py").write_text(REFERENCE)
+    return sub.put_blob(build(d, tmp_path / "ref.kmb").kmb.read_bytes())
+
+
+def commit_with(sub, tmp_path, gen, *, circuit=None, role="worker"):
+    d = tmp_path / f"c{abs(hash((gen, circuit, role)))}"
+    d.mkdir()
+    (d / "gen.py").write_text(gen)
+    blob = sub.put_blob(pack(d))
+    payload = {"blob": blob, "parent": None, "benchmark": "invsqrt"} | ({"circuit": circuit} if circuit else {})
+    sub.append("program.committed", payload, subject="prog:" + blob, actor={"role": role})
+    return blob
+
+
+def run_small(sub, tmp_path):
+    return verifier.run_once(sub, state_path=tmp_path / "cursor", workdir=tmp_path / "work", salts=[1],
+                             max_workers=None, full_max_x=2048)
+
+
+def test_uploaded_circuit_is_scored_without_running_the_generator(tmp_path, sub, monkeypatch):
+    monkeypatch.setenv("LOOP_SANDBOX", "container")
+    circ = reference_circuit(sub, tmp_path)
+    prog = commit_with(sub, tmp_path, "raise RuntimeError('must never run')\n", circuit=circ)
+    assert run_small(sub, tmp_path) == 1
+    [m] = sub.history("prog:" + prog, types=["candidate.measured"])
+    assert m.payload["circuit"] == circ and m.payload["passes"] is True
+
+
+def test_container_mode_refuses_to_build_a_workers_generator(tmp_path, sub, monkeypatch):
+    monkeypatch.setenv("LOOP_SANDBOX", "container")
+    prog = commit_with(sub, tmp_path, BROKEN.format(n=9))
+    run_small(sub, tmp_path)
+    [r] = rejected(sub)
+    assert r.payload["program"] == prog and r.payload["reason"] == "build_failed"
+    assert "does not run generators" in r.payload["detail"]
+
+
+def test_container_mode_still_builds_seed_generators(tmp_path, sub, monkeypatch):
+    monkeypatch.setenv("LOOP_SANDBOX", "container")
+    commit_with(sub, tmp_path, BROKEN.format(n=8), role="seed")
+    run_small(sub, tmp_path)
+    [r] = rejected(sub)
+    assert r.payload["reason"] == "build_failed" and "boom 8" in r.payload["detail"]

@@ -1,0 +1,12 @@
+# Local end-to-end run against a fake model (no Spark, no Claude login):
+#   docker compose -f compose.yaml -f compose.test.yaml up -d --build
+# Set SPARK_ADDR=fake-qwen:8099 and MODEL_NAME=fake-model in .env.
+services:
+  fake-qwen:
+    image: research-loop:local
+    command: python -m tests.fakes.openai_server --host 0.0.0.0 --port 8099
+    networks: [egress]
+    read_only: true
+
+  researcher:
+    profiles: [researcher]   # needs a Claude login; not part of the local test

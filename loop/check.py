@@ -128,14 +128,17 @@ def check_circuit(kmb: Path, *, n_random: int = RANDOM_SAMPLES) -> CheckReport:
     return report(None, toffolis=round(toffolis, 2), cost_estimate=round(circuit.num_qubits * toffolis, 1))
 
 
-def check_bundle(bundle: Path, *, n_random: int = RANDOM_SAMPLES) -> CheckReport:
-    """Build the bundle's gen.py into a temporary file, then sample-check the circuit."""
+def check_bundle(bundle: Path, *, n_random: int = RANDOM_SAMPLES, keep: Path | None = None) -> CheckReport:
+    """Build the bundle's gen.py into a temporary file, then sample-check the circuit. With `keep`, the built
+    circuit is copied there (whether or not it passed)."""
     with tempfile.TemporaryDirectory(prefix="check-") as tmp:
         out = Path(tmp) / "circuit.kmb"
         built = build(Path(bundle), out, timeout=BUILD_TIMEOUT)
         if not built.ok:
             err = (built.stderr or "gen.py exited without writing a circuit").strip()
             return CheckReport(False, "build", err[-2000:])
+        if keep is not None:
+            Path(keep).write_bytes(built.kmb.read_bytes())
         return check_circuit(built.kmb, n_random=n_random)
 
 

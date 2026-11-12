@@ -1,0 +1,9 @@
+.git
+.claude
+.superpowers
+.venv
+var
+secrets
+.env
+**/__pycache__
+nix/vm-test/result

@@ -28,6 +28,7 @@ from substrate import connect
 from substrate.cli import Substrate
 
 DEFAULT_ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v2"
+EXIT_FAILED, EXIT_WAITING = 3, 4  # --once exit codes the launcher backs off on
 RECENT_FAILURES = 5
 RECENT_SUCCESSES = 5
 IN_PROGRESS_WINDOW_S = 20 * 60  # a plan older than the longest job is stale even if its job left no end event
@@ -194,7 +195,8 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
             outcome, summary = "unchanged", note
             return "unchanged"
         out_of_budget = not run.ok and run.error in ("timeout", "token budget")
-        rep = check_bundle(bundle)
+        circuit_file = job / "circuit.kmb"
+        rep = check_bundle(bundle, keep=circuit_file)
         if not rep.passes:
             reason = "out_of_budget" if out_of_budget else ("build_failed" if rep.stage == "build" else "check_failed")
             return abandon(reason, rep.error or "", note if run.ok else f"(stopped: {run.error}) {note}")
@@ -202,12 +204,13 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
             return abandon("not_better", f"estimated cost {rep.cost_estimate:,.0f} > gate {gate:,.0f}", note,
                            rep.cost_estimate)
         program = sub.put_blob(after)
+        committed = {"blob": program, "parent": parent, "benchmark": config.BENCHMARK, "note": note}
+        if circuit_file.is_file():  # the verifier scores this circuit instead of running the generator
+            committed["circuit"] = sub.put_blob(circuit_file.read_bytes())
         # island.joined first: a crash between the two leaves an unjudged-but-placed program, never an orphan
         sub.append("island.joined", {"program": program, "island": island, "via": "submit"},
                    subject="prog:" + program, actor=actor, cause=ann)
-        sub.append("program.committed", {"blob": program, "parent": parent, "benchmark": config.BENCHMARK,
-                                         "note": note},
-                   subject="prog:" + program, actor=actor, cause=ann)
+        sub.append("program.committed", committed, subject="prog:" + program, actor=actor, cause=ann)
         outcome, summary = "committed", note
         return "committed"
     finally:
@@ -228,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-tokens", type=int, default=4096)
     p.add_argument("--role-dir", default=str(DEFAULT_ROLE_DIR))
     p.add_argument("--status-dir", help="write worker-<id>.json heartbeats here (for the live status page)")
+    p.add_argument("--once", action="store_true",
+                   help="run one job and exit (disposable job containers): exit 0 after a job, 3 after a fast "
+                        "failure (endpoint down), 4 if there is nothing to work on yet; the launcher backs off")
     args = p.parse_args(argv)
 
     stopping = False
@@ -242,6 +248,14 @@ def main(argv: list[str] | None = None) -> int:
                        Path(args.role_dir), args.id, Path(args.status_dir) if args.status_dir else None)
     sub = connect(args.substrate)
     rng = random.Random()
+    if args.once:
+        try:
+            outcome = run_job(sub, rng=rng, cfg=cfg, workroot=Path(args.workroot))
+        except LookupError as e:
+            print(f"worker {args.id}: nothing to work on ({e})", flush=True)
+            return EXIT_WAITING
+        print(f"worker {args.id}: {outcome}", flush=True)
+        return EXIT_FAILED if outcome == "failed" else 0
     failures = 0
     while not stopping:
         try:

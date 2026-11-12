@@ -49,7 +49,7 @@ def reject(sub, prog, tier="sweep", reason="quick_check_failed", detail="first l
 def test_empty_substrate_has_all_keys(tmp_path):
     out = live.build_live(Substrate(tmp_path / "e"), heartbeats_dir=None, now=now())
     assert set(out) == {"generated_at", "score", "history", "marks", "health", "workers", "activity", "progress",
-                        "islands", "claude", "last_visit", "hardware", "alerts"}
+                        "islands", "claude", "last_visit", "hardware", "alerts", "launcher"}
     assert out["progress"]["verdict"] is None and out["islands"] == [] and out["alerts"] == []
     assert out["hardware"] is None and out["claude"] == {"points": [], "latest": None, "projected_week_pct": None}
     assert out["score"]["best_cost"] is None and out["score"]["reference_cost"] == 2076774
@@ -311,3 +311,24 @@ def test_build_live_reports_hardware_and_alerts(sub, tmp_path):
     m.mem_total_gib = 25.0
     out = live.build_live(sub, heartbeats_dir=None, now=now(), monitor=m)
     assert out["hardware"]["mem_total_gib"] == 25.0 and "devbox_underused" in [a["rule"] for a in out["alerts"]]
+
+
+# ── launcher (Compose deployments) ─────────────────────────────────────
+def test_launcher_alerts(tmp_path):
+    fresh = live._iso(N - timedelta(seconds=10))
+    ok = {"updated_at": fresh, "slots": [{"slot": 1, "state": "running"}]}
+    assert rules(launcher=ok, launcher_expected=True) == []
+    backoff = {"updated_at": fresh, "slots": [{"slot": 2, "state": "backoff", "last_exit": 3}]}
+    assert rules(launcher=backoff, launcher_expected=True) == ["worker_down"]
+    stale = {"updated_at": live._iso(N - timedelta(minutes=5)), "slots": []}
+    assert rules(launcher=stale, launcher_expected=True) == ["worker_down"]
+    assert rules(launcher=None, launcher_expected=True) == ["worker_down"]
+    assert rules(launcher=None) == []  # systemd deployments: no launcher expected
+
+
+def test_build_live_reads_the_launcher_file(sub, tmp_path):
+    import json as _json
+    f = tmp_path / "launcher.json"
+    f.write_text(_json.dumps({"updated_at": live._iso(datetime.now(UTC)), "slots": [{"slot": 1, "state": "running"}]}))
+    out = live.build_live(sub, heartbeats_dir=None, now=now(), launcher_status=f)
+    assert out["launcher"]["slots"][0]["state"] == "running" and out["alerts"] == []

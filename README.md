@@ -52,13 +52,15 @@ decides whether a visit may happen at all.
 
 ### Lab assistants
 
-Lab assistants are many cheap agents working in parallel, each repeating one cycle: choose an
-island and a parent program in it, announce what it is about to try, read a brief (the parent
-program, the island's instructions, the lessons so far), then make one small, targeted change to the
-generator and submit it as a new program. Every attempt is recorded, whether it changes anything or
-not, along with what it cost. An assistant's behaviour (prompt, tools, limits) is a versioned role,
-and every event it writes names that version, so results are attributable to the behaviour that
-produced them.
+Lab assistants are many cheap agents working in parallel, one job at a time each. A job chooses an
+island and a parent program in it, reads a brief (the parent, the island's instructions, the lessons
+so far, what others on the island are trying now, what recently worked and what failed), declares
+the one idea it will try, then edits the generator and runs a fast sample check, fixing its change
+until the check passes or its budget (time, tokens, checks) runs out. Only a program that passes the
+same check again afterwards, with an estimate close to the island's best, is submitted; anything
+else is recorded as abandoned, with the reason, so later assistants avoid it. An assistant's
+behaviour (prompt, tools, limits) is a versioned role, and every event it writes names that
+version, so results are attributable to the behaviour that produced them.
 
 A **program** is a bundle holding a circuit generator; building it yields a circuit, and a
 **candidate** is one such circuit. One program has many candidates. The first program is Google's
@@ -70,7 +72,8 @@ approach per island.
 The verifier is plain code with no model. It scores every new program using the competition's own
 checker, in tiers, so the expensive check runs only on candidates that might matter:
 
-- **Build** the generator in isolation; a program that fails to build is rejected.
+- **Circuit**: score the circuit the assistant built and uploaded with its program. The verifier
+  never runs an assistant's generator; it builds only the seed generators.
 - **Duplicate rejection**: a circuit identical to one already measured is rejected, since
   re-measuring buys nothing.
 - **Full-domain sweep**: run the circuit once on every input. This catches circuits that are wrong
@@ -175,10 +178,11 @@ candidates, lineage, budget totals) is a set of read-only projections over the e
 
 ### The substrate service
 
-The substrate runs as `substrated`, the only process allowed to open the database and files. Loop
-components call it over a local Unix socket. It identifies each caller by its Unix user
-(`SO_PEERCRED`) rather than trusting what the caller claims, and stamps the caller's role on every
-event itself. A policy file (`loop/policy.json`) limits each role to the event types it needs:
+The substrate runs as `substrated`, the only process that mounts the database and files. Loop
+components call it over HTTP on an internal network. Each role has its own random token, delivered
+as a container secret; the service maps the token to the role rather than trusting what the caller
+claims, and stamps the role on every event itself. A policy file (`loop/policy.json`) limits each
+role to the event types it needs:
 
 | Role | May write | May not |
 |---|---|---|
@@ -188,21 +192,23 @@ event itself. A policy file (`loop/policy.json`) limits each role to the event t
 
 Clients retry with backoff, so `substrated` can be restarted without losing writes.
 
-### Sandboxing
+### Isolation
 
-Models write the code that runs, so both places where model output executes are confined with
-bubblewrap (`bwrap`):
+Models write the code that runs. That code runs only inside lab-assistant job containers, and each
+container lives for exactly one job: a read-only root, a size-capped in-memory work directory, no
+capabilities, CPU, memory and process limits, and the worker token. When the job ends the container
+and everything it wrote are deleted, and the next job starts from the image again. A job container
+can reach only the substrate and, through a one-port forwarder, the Qwen endpoint; both networks are
+internal, so nothing else is reachable. The worst a job can do with its token is append worker
+events; it cannot record a score.
 
-- **pi jobs** see `/nix/store` and the repo read-only, can write only their own job directory under
-  the work root, and get a private `/tmp` and `HOME`. The network stays reachable (the model
-  endpoint), but `/run/substrate` is not mounted, so an agent cannot reach the socket. Its only
-  route to the log is the worker process that supervises it.
-- **`gen.py` builds** run the same way, except the only writable path is the build directory and
-  the network is unshared.
+The verifier never runs an assistant's generator: it scores the circuit the job uploaded, so
+model-written code never runs where the verifier's token is. A program's circuit could in principle
+not match its generator; that only breaks lineage, since children built from that generator fail
+their own checks.
 
-On Linux, `bwrap` is required and startup fails if it is missing, rather than silently running
-unconfined. On macOS, where it does not exist, both run unsandboxed with a logged warning so that
-development and tests still work.
+Outside containers (development), generator builds and pi jobs are confined with bubblewrap on
+Linux and run unsandboxed with a warning on macOS.
 
 ### Agents
 
@@ -219,17 +225,17 @@ exponentially after repeated failures, so an unreachable endpoint never causes a
 
 ### Processes
 
-Each part of the loop is an independent systemd service: one `substrated`, N lab assistant workers,
-exactly one verifier, and the researcher service. There is no central orchestrator; services
-coordinate only through the substrate, and each finishes its current job before stopping, so any
-one can be restarted alone. Exactly one verifier runs because nothing claims a program before
-verifying it, so a second instance would score everything twice.
+The loop is a Docker Compose project (`compose.yaml`), built from one image. Each part is an
+independent service: the substrate, exactly one verifier, the researcher, the live updater, the
+status page, and a launcher that keeps N lab-assistant job containers running and replaces each one
+when its job ends. The launcher is the only service with access to the container runtime; it starts
+one fixed image with fixed arguments and never touches the substrate. Services coordinate only
+through the substrate, so any one can be restarted alone. Exactly one verifier runs because nothing
+claims a program before verifying it, so a second instance would score everything twice.
 
-### Nix and releases
-
-A Nix flake provides the toolchain, and a NixOS module defines the services and the per-role Unix
-users. The loop code runs from a git checkout, so a code update needs a pull and a restart, not a
-rebuild. See [`docs/deploy.md`](docs/deploy.md).
+The host needs only a container runtime; nothing about the loop lives in its own configuration.
+Tool versions (pi, Claude Code, the bridge, uv, Python packages via `uv.lock`) are pinned in the
+image. See [`docs/deploy.md`](docs/deploy.md).
 
 ## Repository layout
 
@@ -237,14 +243,14 @@ rebuild. See [`docs/deploy.md`](docs/deploy.md).
 |---|---|
 | `substrate/` | The event log: `cli.py` (the in-process API), `server.py` (`substrated`), `_store.py`, `_blobs.py`, `_projections.py`, `_schemas.py`, `upcasters.py`, `types.py`, plus `SPEC.md` |
 | `substrate/schema/`, `substrate/fixtures/` | One JSON Schema and one sample payload per event type-version; never deleted |
-| `loop/` | The loop: `worker.py`, `verifier.py`, `verify.py`, `pool.py`, `seed.py`, `pi_runner.py`, `programs.py`, `policy.py`, `policy.json`, `config.py`, `state.py` |
-| `roles/lab_assistant/v1/` | Versioned lab assistant role: system prompt, task template, island instructions, `role.json` |
+| `loop/` | The loop: `worker.py`, `launcher.py`, `check.py`, `verifier.py`, `verify.py`, `pool.py`, `seed.py`, `researcher.py`, `live.py`, `statuspage.py`, `pi_runner.py`, `programs.py`, `policy.py`, `policy.json`, `config.py` |
+| `roles/` | Versioned roles: lab assistant (`v2`: prompts, `tools.ts` with the plan and check tools, island instructions) and researcher |
 | `verifiers/` | Vendored competition verifier and reference generator (Apache-2.0) |
 | `tests/` | `substrate/` and `loop/` tests; `fakes/openai_server.py` is a fake model endpoint for smoke tests |
-| `docs/diagrams/` | The system diagram |
-| `flake.nix`, `nix/module.nix` | Dev shell and the `services.research-loop` NixOS module |
-| `nix/vm-test/` | A NixOS VM configuration used to prove the module end to end |
-| `docs/` | Design spec, implementation plans, deploy guide |
+| `Dockerfile`, `compose.yaml`, `compose.test.yaml` | The image, the deployment, and a local end-to-end run against the fake model |
+| `scripts/` | `init-secrets` (role tokens), `researcher.sh` (researcher entrypoint and login) |
+| `flake.nix` | Dev shell (Python, uv, Node, pi, bubblewrap) for running the pi tests on Linux |
+| `docs/` | Design spec and notes, implementation plans, deploy guide |
 
 Out of scope: the other tasks (`dqi`, `dfthcsos`), automatic Kaggle submission, multi-machine
 operation, and blob garbage collection.
@@ -269,7 +275,7 @@ nix develop -c uv run pytest -m pi
 
 All commands take a data root, which holds `events.sqlite` and `blobs/`. Here they open it
 in-process (`--root`, an alias for `--substrate <directory>`); in a deployment the same entry
-points use `--substrate unix:/run/substrate/api.sock`. The worker needs `pi` (use `nix develop`)
+points use `--substrate http://substrate:7070` with a role token. The worker needs `pi` (use `nix develop`)
 and an OpenAI-compatible endpoint.
 
 ```sh
@@ -306,10 +312,16 @@ uv run python -m substrate.cli --root $ROOT export events.jsonl
 
 ### Deploying
 
-The devbox imports this repo's NixOS module, which defines the checkout, `substrated`, seed,
-verifier, and worker units under one `research-loop.target`, along with the per-role Unix users.
-Follow [`docs/deploy.md`](docs/deploy.md) for the flake input, the `services.research-loop`
-options, and the operating commands.
+```sh
+cp .env.example .env                            # Spark address, model, worker count, Tailscale IP
+scripts/init-secrets                            # once: one token per role, in secrets/
+docker compose up -d --build
+docker compose run --rm researcher scripts/researcher.sh login   # once: Claude Pro login
+```
+
+To try the whole stack locally against the fake model, set `SPARK_ADDR=fake-qwen:8099` and
+`MODEL_NAME=fake-model` in `.env` and run `docker compose -f compose.yaml -f compose.test.yaml up -d
+--build`. [`docs/deploy.md`](docs/deploy.md) covers operating, updating and moving existing data.
 
 ## Further reading
 

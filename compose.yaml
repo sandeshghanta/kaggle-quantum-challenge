@@ -1,0 +1,135 @@
+# The research loop as a Compose project. See docs/design/compose.md.
+# Setup: scripts/init-secrets && cp .env.example .env (edit) && docker compose up -d --build
+name: research-loop
+
+x-loop: &loop
+  image: research-loop:local
+  build:
+    context: .
+    args:
+      GIT_SHA: ${GIT_SHA:-nogit}
+  read_only: true
+  tmpfs: ["/tmp:size=256m"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  init: true
+
+services:
+  substrate:
+    <<: *loop
+    command: python -m substrate.server --listen 0.0.0.0:7070 --root /data --policy loop/policy.json --tokens-dir /run/secrets
+    volumes: ["substrate-data:/data"]
+    networks: [substrate]
+    secrets: [worker, verifier, seed, live, researcher, viewer]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 7070), 2)"]
+      interval: 5s
+      retries: 20
+
+  seed:
+    <<: *loop
+    restart: "no"
+    command: python -m loop.seed --substrate http://substrate:7070
+    environment: { SUBSTRATE_TOKEN_FILE: /run/secrets/seed }
+    secrets: [seed]
+    networks: [substrate]
+    depends_on: { substrate: { condition: service_healthy } }
+
+  verifier:
+    <<: *loop
+    command: >-
+      python -m loop.verifier --substrate http://substrate:7070 --state /state/verifier.cursor --workdir /state/job
+      --max-workers ${VERIFIER_MAX_WORKERS:-12} --salts 1 2 3 4
+    environment: { SUBSTRATE_TOKEN_FILE: /run/secrets/verifier, LOOP_SANDBOX: container }
+    secrets: [verifier]
+    volumes: ["verifier-state:/state"]
+    networks: [substrate]
+    stop_grace_period: 60s
+    mem_limit: 8g
+    depends_on: { seed: { condition: service_completed_successfully } }
+
+  # The only service with access to the container runtime. Starts one fixed image per job; see loop/launcher.py.
+  launcher:
+    <<: *loop
+    user: "0"   # to use the runtime socket; it runs no model code and takes no input from jobs
+    command: >-
+      python -m loop.launcher --workers ${WORKERS:-8} --image research-loop:local
+      --networks research-loop-substrate,research-loop-qwen --token-file ${SECRETS_DIR:?run scripts/init-secrets}/worker
+      --base-url http://qwen-proxy:8000/v1 --model ${MODEL_NAME:?set MODEL_NAME in .env}
+      --context-window ${MODEL_CONTEXT_WINDOW:-32768} --status /launcher-status/launcher.json
+    volumes:
+      - "${CONTAINER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"
+      # mounted where the image has no directory, so the volume stays root-owned (the launcher runs as root
+      # without capabilities and cannot write into another user's directory)
+      - "status-launcher:/launcher-status"
+    network_mode: none
+    stop_grace_period: 60s
+    depends_on: { seed: { condition: service_completed_successfully }, qwen-proxy: { condition: service_started } }
+
+  # Lab-assistant jobs reach the Spark through this, and nothing else: the qwen network is internal.
+  qwen-proxy:
+    <<: *loop
+    command: socat TCP-LISTEN:8000,fork,reuseaddr TCP:${SPARK_ADDR:?set SPARK_ADDR in .env}
+    networks: [qwen, egress]
+
+  researcher:
+    <<: *loop
+    read_only: false   # claude and pi write caches under HOME (a volume) and /tmp
+    command: scripts/researcher.sh
+    environment:
+      SUBSTRATE_TOKEN_FILE: /run/secrets/researcher
+      HOME: /home/loop
+      PI_CODING_AGENT_DIR: /home/loop/pi-agent
+      RESEARCHER_MODEL: ${RESEARCHER_MODEL:-claude-opus-5-5}
+      RESEARCHER_INTERVAL_MIN: ${RESEARCHER_INTERVAL_MIN:-45}
+      RESEARCHER_CAP_PCT: ${RESEARCHER_CAP_PCT:-80}
+    secrets: [researcher]
+    volumes: ["researcher-home:/home/loop", "status-researcher:/status"]
+    networks: [substrate, egress]
+    stop_grace_period: 16m
+    depends_on: { seed: { condition: service_completed_successfully } }
+
+  live:
+    <<: *loop
+    command: >-
+      python -m loop.live --substrate http://substrate:7070 --out /status/live.json --history /status/history.json
+      --launcher-status /launcher/launcher.json --qwen-base-url http://qwen-proxy:8000/v1 --disk-path /data
+      --interval-s 15
+    environment: { SUBSTRATE_TOKEN_FILE: /run/secrets/live }
+    secrets: [live]
+    volumes: ["status-live:/status", "status-launcher:/launcher:ro", "substrate-data:/data:ro"]
+    networks: [substrate, qwen]
+    depends_on: { seed: { condition: service_completed_successfully } }
+
+  statuspage:
+    <<: *loop
+    command: >-
+      python -m loop.statuspage --host 0.0.0.0 --port 8080 --live /status/live/live.json
+      --history /status/live/history.json --researcher /status/researcher/researcher.json
+    volumes:
+      - "status-live:/status/live:ro"
+      - "status-researcher:/status/researcher:ro"
+    networks: [egress]
+    ports: ["${STATUS_BIND:-127.0.0.1}:8080:8080"]   # set STATUS_BIND to the host's Tailscale IP
+
+networks:
+  substrate: { name: research-loop-substrate, internal: true }
+  qwen: { name: research-loop-qwen, internal: true }
+  egress: {}
+
+volumes:
+  substrate-data:
+  verifier-state:
+  researcher-home:
+  status-live:
+  status-researcher:
+  status-launcher:
+
+secrets:
+  worker: { file: "${SECRETS_DIR:-./secrets}/worker" }
+  verifier: { file: "${SECRETS_DIR:-./secrets}/verifier" }
+  seed: { file: "${SECRETS_DIR:-./secrets}/seed" }
+  live: { file: "${SECRETS_DIR:-./secrets}/live" }
+  researcher: { file: "${SECRETS_DIR:-./secrets}/researcher" }
+  viewer: { file: "${SECRETS_DIR:-./secrets}/viewer" }
