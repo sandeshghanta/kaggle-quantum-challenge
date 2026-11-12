@@ -178,6 +178,13 @@ history(subject: str, *, types: list[str] | None = None) -> list[Event]
 budget(pool: str, *, window: str = "7d") -> BudgetState
     # Spend over the window. Reports only; caps live in loop config.
 
+# authorization (optional)
+Substrate(root, *, authorize=None)
+    # authorize(principal, type, subject, payload) runs before every append and put_blob
+    # (put_blob passes type="blob") and may raise Forbidden. append/put_blob accept
+    # principal=...; with no hook or no principal, writes are unrestricted. The substrate
+    # stays role-agnostic: principals and the policy come from the caller (e.g. substrated).
+
 # raw
 since(cursor: int | None, *, types=None, limit: int = 1000) -> (list[Event], int)
     # Events after cursor (a seq), in commit order, plus the next cursor.
