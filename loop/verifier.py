@@ -7,6 +7,7 @@ import signal
 import time
 from pathlib import Path
 
+from loop import pool
 from loop.state import load_cursor, save_cursor
 from loop.verify import evaluate
 from substrate.cli import Substrate
@@ -16,8 +17,9 @@ JUDGED = ["candidate.measured", "candidate.rejected"]
 
 
 def island_best(sub: Substrate, program: str) -> float | None:
-    """Best cost in the program's island. Replaced by loop.pool in Task 5."""
-    return None
+    """Best passing cost in the program's island, or None if unknown."""
+    island = pool.island_of(sub, program)
+    return pool.island_best(sub, island) if island else None
 
 
 def pending(sub: Substrate, cursor: int) -> tuple[list[Event], int]:
