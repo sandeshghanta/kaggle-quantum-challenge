@@ -1,0 +1,4 @@
+{"version": "v2", "tools": ["read", "edit", "grep", "find", "ls", "check"], "extensions": ["check.ts"],
+ "max_output_tokens": 4096, "thinking_budget": 1024,
+ "budget": {"timeout_s": 900, "checks": 8, "output_tokens": 30000},
+ "gate_margin": 0.05}

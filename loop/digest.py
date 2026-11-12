@@ -153,7 +153,9 @@ def _rejections(sub, now) -> dict:
             samples.append({"reason": ev.payload["reason"], "detail": detail})
         if len(samples) == 3:
             break
-    return {"by_reason": dict(Counter(ev.payload["reason"] for ev in recent)), "samples": samples}
+    abandoned = [ev for ev in events(sub, "attempt.abandoned") if parse_ts(ev.ts) >= now - DAY]
+    return {"by_reason": dict(Counter(ev.payload["reason"] for ev in recent)), "samples": samples,
+            "abandoned_by_reason": dict(Counter(ev.payload["reason"] for ev in abandoned))}
 
 
 # Lab-assistant commits carry "lab_assistant" in-process and the policy role "worker" through substrated.

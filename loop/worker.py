@@ -1,4 +1,10 @@
-"""Lab assistant worker: pick a parent, announce, run one pi job, commit the result. Repeat."""
+"""Lab assistant worker: pick a parent, announce, run one pi job, gate the result, commit or abandon. Repeat.
+
+Inside the job the assistant edits and runs its `check` tool until its idea passes or the budget runs out (time,
+output tokens, number of checks; all from role.json). Afterwards the worker runs the same sample check itself and
+commits only a program that passes with an estimate within the gate margin of the island's best; anything else is
+recorded as attempt.abandoned so later assistants can steer away from it.
+"""
 
 from __future__ import annotations
 
@@ -11,14 +17,18 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from loop import config, pool
+import sys
+
+from loop import config, pool, sandbox
+from loop.check import check_bundle
 from loop.heartbeat import JobProgress, write_heartbeat
 from loop.pi_runner import run_pi, write_agent_dir
 from loop.programs import pack, unpack
 from substrate import connect
 from substrate.cli import Substrate
 
-DEFAULT_ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v1"
+DEFAULT_ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v2"
+RECENT_FAILURES = 5
 
 
 @dataclass
@@ -42,6 +52,32 @@ def _lessons(sub: Substrate) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
+def _first_line(text: str | None, limit: int = 200) -> str:
+    lines = [l for l in (text or "").strip().splitlines() if l.strip()]
+    return lines[-1][:limit] if lines and lines[0].startswith("Traceback") else (lines[0][:limit] if lines else "")
+
+
+def recent_failures(sub: Substrate, island: str, n: int = RECENT_FAILURES) -> str:
+    """The island's last `n` dead ends: abandoned jobs and verifier rejections, newest first, one line each."""
+    notes = {ev.payload["blob"]: ev.payload.get("note") for ev in sub.since(None, types=["program.committed"],
+                                                                             limit=-1)[0]}
+    rows = []
+    for ev in reversed(sub.since(None, types=["attempt.abandoned", "candidate.rejected"], limit=-1)[0]):
+        p = ev.payload
+        if ev.type == "attempt.abandoned":
+            if p["island"] != island:
+                continue
+            rows.append(f"- {p['reason']}: {p.get('note') or '(no note)'} -- {_first_line(p.get('detail'))}")
+        else:
+            if p["reason"] == "duplicate" or pool.island_of(sub, p["program"]) != island:
+                continue
+            rows.append(f"- verifier {p['reason']}: {notes.get(p['program']) or '(no note)'} -- "
+                        f"{_first_line(p.get('detail'))}")
+        if len(rows) == n:
+            break
+    return "\n".join(rows) or "(none)"
+
+
 def _note(final_text: str) -> str:
     for line in final_text.splitlines():
         if line.strip().startswith("SUMMARY:"):
@@ -58,6 +94,7 @@ def backoff_seconds(consecutive_failures: int) -> float:
 
 def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: Path) -> str:
     role = json.loads((cfg.role_dir / "role.json").read_text())
+    budget = role.get("budget", {"timeout_s": role.get("timeout_s", 900)})
     island = pool.pick_island(sub, rng)
     parent = pool.pick_parent(sub, island, rng)
     actor = config.actor("lab_assistant", role["version"], cfg.model)
@@ -67,36 +104,70 @@ def run_job(sub: Substrate, *, rng: random.Random, cfg: WorkerConfig, workroot: 
     job = Path(workroot) / ann
     progress = JobProgress(cfg.status_dir, cfg.worker_id, island=island, parent=parent, announcement=ann)
     outcome, summary = "failed", "crashed"
+    checks = 0
+
+    def on_event(ev: dict) -> None:
+        nonlocal checks
+        if ev.get("type") == "tool_execution_end" and ev.get("toolName") == "check":
+            checks += 1
+        progress.on_event(ev)
+
+    def abandon(reason: str, detail: str, note: str, estimate: float | None = None) -> str:
+        nonlocal outcome, summary
+        sub.append("attempt.abandoned", {"island": island, "reason": reason, "detail": detail[-2000:],
+                                         "note": note, "estimate": estimate, "checks": checks},
+                   subject="prog:" + parent, actor=actor, cause=ann)
+        outcome, summary = "abandoned", f"{reason}: {note}"[:200]
+        return "abandoned"
+
     try:
         bundle = job / "bundle"
         unpack(sub.get_blob(parent), bundle)
         before = pack(bundle)
         best = pool.island_best(sub, island)
+        best_sweep = pool.island_best_sweep(sub, island) or best
+        gate = best_sweep * (1 + role.get("gate_margin", 0.05)) if best_sweep else None
         prompt = (cfg.role_dir / "task.md").read_text().format(
             parent_cost=f"{best:.6g}" if best else "not yet measured",
-            island_instructions=pool.islands(sub)[island]["instructions"], lessons=_lessons(sub))
+            gate_cost=f"{gate:.6g}" if gate else "any (nothing measured yet)",
+            island_instructions=pool.islands(sub)[island]["instructions"], lessons=_lessons(sub),
+            recent_failures=recent_failures(sub, island))
         agent = write_agent_dir(job / "agent", base_url=cfg.base_url, model=cfg.model, api_key_env=cfg.api_key_env,
                                 context_window=cfg.context_window, max_tokens=cfg.max_tokens)
         run = run_pi(bundle, agent, prompt=prompt, system_append=cfg.role_dir / "system.md", tools=role["tools"],
-                     model=cfg.model, timeout_s=role["timeout_s"], on_event=progress.on_event)
+                     model=cfg.model, timeout_s=budget["timeout_s"], on_event=on_event,
+                     extensions=[cfg.role_dir / e for e in role.get("extensions", [])],
+                     extra_ro=[config.REPO, *sandbox.python_paths()],
+                     extra_env={"LOOP_PYTHON": sys.executable, "LOOP_REPO": str(config.REPO),
+                                "LOOP_CHECK_MAX": str(budget.get("checks", 8))},
+                     max_output_tokens=budget.get("output_tokens"))
         sub.append("budget.spent", {"pool": "qwen", "tokens_in": run.tokens_in, "tokens_out": run.tokens_out,
                                     "tokens_cached": run.tokens_cached, "wall_seconds": round(run.seconds, 2)},
                    subject="pool:qwen", actor=actor, cause=ann)
-        if not run.ok:
-            outcome, summary = "failed", (run.error or "failed")[:200]
-            return "failed"
         after = pack(bundle)
+        note = _note(run.final_text)
         if after == before:
-            outcome, summary = "unchanged", _note(run.final_text)
+            if not run.ok:
+                outcome, summary = "failed", (run.error or "failed")[:200]
+                return "failed"
+            outcome, summary = "unchanged", note
             return "unchanged"
+        out_of_budget = not run.ok and run.error in ("timeout", "token budget")
+        rep = check_bundle(bundle)
+        if not rep.passes:
+            reason = "out_of_budget" if out_of_budget else ("build_failed" if rep.stage == "build" else "check_failed")
+            return abandon(reason, rep.error or "", note if run.ok else f"(stopped: {run.error}) {note}")
+        if gate is not None and rep.cost_estimate is not None and rep.cost_estimate > gate:
+            return abandon("not_better", f"estimated cost {rep.cost_estimate:,.0f} > gate {gate:,.0f}", note,
+                           rep.cost_estimate)
         program = sub.put_blob(after)
         # island.joined first: a crash between the two leaves an unjudged-but-placed program, never an orphan
         sub.append("island.joined", {"program": program, "island": island, "via": "submit"},
                    subject="prog:" + program, actor=actor, cause=ann)
         sub.append("program.committed", {"blob": program, "parent": parent, "benchmark": config.BENCHMARK,
-                                         "note": _note(run.final_text)},
+                                         "note": note},
                    subject="prog:" + program, actor=actor, cause=ann)
-        outcome, summary = "committed", _note(run.final_text)
+        outcome, summary = "committed", note
         return "committed"
     finally:
         progress.finish(outcome, summary)

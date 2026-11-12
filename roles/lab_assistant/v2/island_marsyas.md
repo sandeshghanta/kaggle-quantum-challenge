@@ -1,0 +1,2 @@
+Start from a public, already strong generator: it normalises x bit by bit, looks up per-segment quadratic coefficients, and evaluates them with all-signed-digit Horner rows, a split high/low output word, nested adder windows and an exact-domain pass that deletes provably redundant Toffolis.
+Its cost is about 14x better than the reference, so the remaining gains are small: look for qubits that can be freed earlier, windows that can be narrowed, and rotation angles that can be dropped, without ever failing the sweep.

@@ -328,7 +328,7 @@ function researcherBlock() {
   $("researcher").innerHTML = facts + current + questions + log + beliefs;
 }
 
-const KIND = { "new best": ["★", "good"], rejected: ["✗", "bad"], direction: ["◆", ""], lessons: ["◇", ""], committed: ["·", "muted"], measured: ["·", ""] };
+const KIND = { "new best": ["★", "good"], rejected: ["✗", "bad"], abandoned: ["↺", "warn"], direction: ["◆", ""], lessons: ["◇", ""], committed: ["·", "muted"], measured: ["·", ""] };
 function activityBlock() {
   const L = state.live;
   if (!L) { $("activity").innerHTML = `<li><span class="empty">Live updater not running.</span></li>`; return; }

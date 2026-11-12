@@ -52,19 +52,25 @@ def _text(message: dict) -> str:
 
 def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, tools: list[str],
            model: str, timeout_s: float, provider: str = PROVIDER, sandboxed: bool = True,
-           on_event: Callable[[dict], None] | None = None) -> PiRun:
+           on_event: Callable[[dict], None] | None = None, extensions: list[Path] = (),
+           extra_ro: list[Path] = (), extra_env: dict[str, str] | None = None,
+           max_output_tokens: int | None = None) -> PiRun:
     """Run pi once. `provider` selects the model provider in the agent dir (default: the Qwen endpoint).
 
     `sandboxed=False` skips bubblewrap; only for the researcher, which has no tools and needs the
     user's Claude login in HOME. `on_event` sees every JSON event pi prints (e.g. to read rate-limit info).
+    `extensions` are pi extension files (custom tools), `extra_ro` more read-only paths inside the sandbox, and
+    `max_output_tokens` a budget over the whole run: pi is stopped once the model has generated that many tokens.
     """
     cmd = ["pi", "--mode", "json", "--no-session", "--no-approve", "-nc",
            "--provider", provider, "--model", f"{provider}/{model}",
            *(["--tools", ",".join(tools)] if tools else ["-nt"]),
+           *[a for ext in extensions for a in ("-e", str(ext))],
            "--append-system-prompt", str(system_append), prompt]
-    env = os.environ | {"PI_CODING_AGENT_DIR": str(agent_dir)}
+    env = os.environ | {"PI_CODING_AGENT_DIR": str(agent_dir)} | (extra_env or {})
     pi_bin = shutil.which("pi")
     ro = [Path(system_append).resolve().parent] + ([Path(pi_bin).resolve().parent.parent] if pi_bin else [])
+    ro += [Path(p).resolve() for p in (*extensions, *extra_ro)]
     if sandboxed:
         cmd = sandbox.wrap(cmd, rw=[Path(workdir), Path(agent_dir)], ro=ro, network=True, cwd=Path(workdir))
     start = time.monotonic()
@@ -75,8 +81,8 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
     sel = selectors.DefaultSelector()
     sel.register(proc.stdout, selectors.EVENT_READ)
     sel.register(proc.stderr, selectors.EVENT_READ)
-    timed_out = False
-    while sel.get_map():
+    timed_out = over_budget = False
+    while sel.get_map() and not over_budget:
         remaining = timeout_s - (time.monotonic() - start)
         if remaining <= 0:
             timed_out = True
@@ -109,16 +115,18 @@ def run_pi(workdir: Path, agent_dir: Path, *, prompt: str, system_append: Path, 
                     for k in totals:
                         totals[k] += int(msg_usage.get(k, 0) or 0)
                     usage = {}
-    if timed_out:
+                    if max_output_tokens is not None and totals["output"] >= max_output_tokens:
+                        over_budget = True
+    if timed_out or over_budget:
         os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
-    else:
-        proc.wait()
+    proc.wait()
     seconds = time.monotonic() - start
     tokens = dict(tokens_in=totals["input"] + totals["cacheRead"], tokens_out=totals["output"],
                   tokens_cached=totals["cacheRead"])
     if timed_out:
         return PiRun(False, None, final, seconds=seconds, error="timeout", **tokens)
+    if over_budget:
+        return PiRun(False, None, final, seconds=seconds, error="token budget", **tokens)
     ok = proc.returncode == 0
     return PiRun(ok, proc.returncode, final, seconds=seconds,
                  error=None if ok else err.decode(errors="replace")[-2000:] or f"exit {proc.returncode}", **tokens)

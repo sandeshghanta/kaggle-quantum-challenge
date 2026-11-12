@@ -24,7 +24,7 @@ STALE_AFTER = timedelta(minutes=2)
 WINDOW = timedelta(hours=24)
 ACTIVITY_LIMIT = 25
 TYPES = ["program.committed", "island.joined", "attempt.announced", "candidate.measured", "candidate.rejected",
-         "budget.spent", "direction", "lessons.published", "quota.observed", "researcher.visited"]
+         "budget.spent", "direction", "lessons.published", "quota.observed", "researcher.visited", "attempt.abandoned"]
 
 # progress verdict
 IMPROVING_WITHIN = timedelta(hours=6)
@@ -230,6 +230,10 @@ def build_live(sub, *, heartbeats_dir: Path | None, now: datetime, monitor: Moni
             n_direction += 1
             marks.append({"t": t, "label": f"D{n_direction}"})
             activity.append({"t": t, "kind": "direction", "text": p["brief"]})
+        elif ev.type == "attempt.abandoned":
+            detail = _first_line(p.get("detail"))
+            activity.append({"t": t, "kind": "abandoned",
+                             "text": f"{p['island']}: {p['reason']}" + (f": {detail}" if detail else "")})
         elif ev.type == "quota.observed":
             quota.append((ts, p))
         elif ev.type == "researcher.visited":

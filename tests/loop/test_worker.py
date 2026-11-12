@@ -3,6 +3,7 @@ import random
 import pytest
 
 from loop import worker
+from loop.check import CheckReport
 from loop.pi_runner import PiRun
 from loop.seed import seed_reference
 from substrate.cli import Substrate
@@ -30,6 +31,16 @@ def fake_run(edit: bool, ok: bool = True, error: str | None = None, final="SUMMA
         return PiRun(ok=ok, exit_code=0 if ok else None, final_text=final, tokens_in=500, tokens_out=60,
                      tokens_cached=400, seconds=1.5, error=error)
     return run
+
+
+PASS = CheckReport(True, "ok", None, qubits=40, toffolis=100.0, cost_estimate=4000.0, samples=10)
+
+
+@pytest.fixture(autouse=True)
+def fast_check(monkeypatch, request):
+    """The worker's final gate, faked (fast); tests marked real_check use the actual build + sample check."""
+    if "real_check" not in request.keywords:
+        monkeypatch.setattr(worker, "check_bundle", lambda bundle: PASS)
 
 
 def only(sub, t):
@@ -67,7 +78,7 @@ def test_unchanged_job_commits_nothing(sub, cfg, tmp_path, monkeypatch):  # Revi
 
 
 def test_failed_run_still_records_spend(sub, cfg, tmp_path, monkeypatch):  # Review Focus 3
-    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, ok=False, error="timeout"))
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False, ok=False, error="connection refused"))
     assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "failed"
     assert len(only(sub, "program.committed")) == 1 and len(only(sub, "budget.spent")) == 1
 
@@ -128,7 +139,7 @@ def test_heartbeats_follow_the_job(sub, cfg, tmp_path, monkeypatch):
 def test_failed_job_heartbeat_says_failed(sub, cfg, tmp_path, monkeypatch):
     import dataclasses
     cfg = dataclasses.replace(cfg, status_dir=tmp_path / "st")
-    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, ok=False, error="timeout"))
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=False, ok=False, error="timeout"))
     worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
     assert beat(tmp_path)["last_outcome"] == "failed" and beat(tmp_path)["last_summary"] == "timeout"
 
@@ -149,3 +160,84 @@ def test_no_status_dir_writes_nothing(sub, cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "run_pi", fake_run(edit=False))
     worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
     assert not (tmp_path / "st").exists()
+
+
+
+# ── the gate after the job ─────────────────────────────────────────────
+def gate_with(monkeypatch, report):
+    monkeypatch.setattr(worker, "check_bundle", lambda bundle: report)
+
+
+def test_failing_final_check_abandons_with_the_error(sub, cfg, tmp_path, monkeypatch):
+    gate_with(monkeypatch, CheckReport(False, "check", "x=2097153: phase error too big", qubits=40, samples=10))
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
+    assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "abandoned"
+    [ab] = only(sub, "attempt.abandoned")
+    [ann] = only(sub, "attempt.announced")
+    assert ab.cause == ann.id and ab.subject == ann.subject
+    assert ab.payload["reason"] == "check_failed" and "x=2097153" in ab.payload["detail"]
+    assert ab.payload["note"] == "tightened Newton step" and len(only(sub, "program.committed")) == 1
+
+
+def test_build_failure_and_budget_stop_are_told_apart(sub, cfg, tmp_path, monkeypatch):
+    gate_with(monkeypatch, CheckReport(False, "build", "SyntaxError: invalid syntax"))
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, ok=False, error="timeout"))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    assert [a.payload["reason"] for a in only(sub, "attempt.abandoned")] == ["build_failed", "out_of_budget"]
+
+
+def test_valid_but_worse_estimate_is_not_submitted(sub, cfg, tmp_path, monkeypatch):
+    from loop import config
+    seed = only(sub, "program.committed")[0].payload["blob"]
+    sub.append("candidate.measured", {"program": seed, "circuit": "sha256:" + "1" * 64, "cost": 2000000.0,
+                                      "passes": True, "benchmark": "invsqrt", "metrics": {"sweep_cost": 2100000.0},
+                                      "verifier": config.verifier_tag(), "cost_basis": config.COST_BASIS},
+               subject="prog:" + seed, actor={"role": "verifier"})
+    best = worker.pool.island_best_sweep(sub, "main")
+    assert best == 2100000.0
+    gate_with(monkeypatch, CheckReport(True, "ok", None, qubits=40, cost_estimate=best * 1.2, samples=10))
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
+    assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "abandoned"
+    [ab] = only(sub, "attempt.abandoned")
+    assert ab.payload["reason"] == "not_better" and ab.payload["estimate"] == best * 1.2
+
+
+def test_timed_out_job_with_a_passing_edit_is_still_committed(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, ok=False, error="timeout"))
+    assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "committed"
+
+
+def test_job_gets_the_check_tool_budget_and_recent_failures(sub, cfg, tmp_path, monkeypatch):
+    gate_with(monkeypatch, CheckReport(False, "check", "x=7: scratch qubit q(30) did not return to |0>", samples=1))
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True, final="SUMMARY: freed q30 early"))
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    seen = {}
+
+    def run(workdir, agent_dir, **kw):
+        seen.update(kw)
+        kw["on_event"]({"type": "tool_execution_end", "toolName": "check", "result": {}, "isError": False})
+        return fake_run(edit=False)(workdir, agent_dir)
+
+    monkeypatch.setattr(worker, "run_pi", run)
+    worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w")
+    assert "check" in seen["tools"] and seen["extensions"][0].name == "check.ts"
+    assert seen["extra_env"]["LOOP_CHECK_MAX"] == "8" and seen["max_output_tokens"] == 30000
+    assert seen["timeout_s"] == 900
+    assert "check_failed: freed q30 early -- x=7: scratch qubit q(30)" in seen["prompt"]
+
+
+def test_recent_failures_lists_newest_first_and_only_this_island(sub, cfg, tmp_path):
+    for i, isl in enumerate(["main", "other", "main"]):
+        sub.append("attempt.abandoned", {"island": isl, "reason": "check_failed", "detail": f"err {i}",
+                                         "note": f"try {i}"}, subject="prog:x", actor={"role": "t"})
+    text = worker.recent_failures(sub, "main")
+    assert text.splitlines() == ["- check_failed: try 2 -- err 2", "- check_failed: try 0 -- err 0"]
+    assert worker.recent_failures(sub, "nowhere") == "(none)"
+
+
+@pytest.mark.real_check
+def test_real_gate_commits_a_valid_edit_of_the_reference(sub, cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(worker, "run_pi", fake_run(edit=True))
+    assert worker.run_job(sub, rng=random.Random(0), cfg=cfg, workroot=tmp_path / "w") == "committed"

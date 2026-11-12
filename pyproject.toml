@@ -20,4 +20,4 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = ["pi: needs the pi CLI"]
+markers = ["pi: needs the pi CLI", "real_check: runs the real build and sample check"]

@@ -99,7 +99,14 @@ def test_rejections_tally_with_samples(sub, clock):
     assert r["by_reason"] == {"build_failed": 5, "duplicate": 1}
     assert [s["detail"] for s in r["samples"]] == ["boom 4", "boom 3", "boom 2"]
     old = digest.build_digest(sub, now=clock.t + timedelta(days=2))["rejections_24h"]
-    assert old == {"by_reason": {}, "samples": []}
+    assert old == {"by_reason": {}, "samples": [], "abandoned_by_reason": {}}
+
+
+def test_abandoned_jobs_are_tallied_by_reason(sub, clock):
+    for reason in ("check_failed", "check_failed", "not_better"):
+        sub.append("attempt.abandoned", {"island": "main", "reason": reason}, subject="prog:x", actor=h.LAB)
+    r = digest.build_digest(sub, now=clock.t)["rejections_24h"]
+    assert r["abandoned_by_reason"] == {"check_failed": 2, "not_better": 1}
 
 
 def test_hit_rate(sub, clock):

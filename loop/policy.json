@@ -16,6 +16,7 @@
       "blob": true,
       "append": {
         "attempt.announced": {},
+        "attempt.abandoned": {},
         "program.committed": {},
         "island.joined": {
           "via": [

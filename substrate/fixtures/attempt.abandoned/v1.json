@@ -1,0 +1,8 @@
+{
+  "island": "marsyas",
+  "reason": "check_failed",
+  "detail": "x=2097153: phase error 3.1e-08 turns exceeds tolerance 2.9e-11",
+  "note": "narrowed the low adder window by one bit",
+  "estimate": null,
+  "checks": 5
+}

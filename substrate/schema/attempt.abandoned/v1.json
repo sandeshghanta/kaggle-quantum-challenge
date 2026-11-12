@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "substrate/schema/attempt.abandoned/v1.json",
+  "title": "attempt.abandoned",
+  "version": 1,
+  "status": "active",
+  "since": "2026-11-12",
+  "description": "A lab assistant's job that ended without submitting a program: its final check failed, its estimate was not good enough, or it ran out of budget. Lets later assistants steer away from the same dead end. Cause is the job's attempt.announced; subject is prog:<parent program>.",
+  "type": "object",
+  "required": ["island", "reason"],
+  "properties": {
+    "island": {"type": "string", "description": "Island id."},
+    "reason": {
+      "type": "string",
+      "enum": ["build_failed", "check_failed", "not_better", "out_of_budget"],
+      "description": "build_failed / check_failed: the worker's final sample check; not_better: valid but the estimate was more than the gate margin above the island's best; out_of_budget: stopped at the time, token or check limit with an edit that did not pass."
+    },
+    "detail": {"type": "string", "description": "First lines of the error, or the estimate against the island best."},
+    "note": {"type": "string", "description": "The assistant's own one-line summary of what it tried."},
+    "estimate": {"type": ["number", "null"], "description": "Estimated cost from the sample check, when it passed."},
+    "checks": {"type": "integer", "minimum": 0, "description": "How many times the assistant ran its check tool."}
+  }
+}

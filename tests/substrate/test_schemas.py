@@ -10,7 +10,7 @@ FIX = Path("substrate/fixtures")
 
 def test_every_type_has_a_fixture_and_vice_versa():
     assert sorted(p.name for p in FIX.iterdir()) == s.event_types()
-    assert len(s.event_types()) == 16 and "envelope" not in s.event_types()
+    assert len(s.event_types()) == 17 and "envelope" not in s.event_types()
 
 
 @pytest.mark.parametrize("t", s.event_types())

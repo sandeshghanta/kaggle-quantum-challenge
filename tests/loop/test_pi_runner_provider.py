@@ -18,7 +18,11 @@ def captured(monkeypatch, tmp_path):
         raise Stop
 
     monkeypatch.setattr(pi_runner.subprocess, "Popen", popen)
-    monkeypatch.setattr(sandbox, "wrap", lambda cmd, **kw: ["SANDBOX", *cmd])
+    def wrap(cmd, **kw):
+        seen["wrap"] = kw
+        return ["SANDBOX", *cmd]
+
+    monkeypatch.setattr(sandbox, "wrap", wrap)
     (tmp_path / "sys.md").write_text("x")
     return seen
 
@@ -41,6 +45,21 @@ def test_researcher_provider_unsandboxed(captured, tmp_path):
     cmd = captured["cmd"]
     assert cmd[0] == "pi" and cmd[cmd.index("--model") + 1] == "claude-bridge/claude-opus-5-5"
     assert captured["env"]["PI_CODING_AGENT_DIR"] == str(tmp_path / "agent")
+
+
+def test_extensions_tools_env_and_read_only_paths(captured, tmp_path):
+    ext = tmp_path / "check.ts"
+    ext.write_text("export default () => {}")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(Stop):
+        pi_runner.run_pi(tmp_path, tmp_path / "agent", prompt="hi", system_append=tmp_path / "sys.md",
+                         tools=["read", "edit", "check"], model="m", timeout_s=5, extensions=[ext],
+                         extra_ro=[repo], extra_env={"LOOP_CHECK_MAX": "8"})
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--tools") + 1] == "read,edit,check" and cmd[cmd.index("-e") + 1] == str(ext)
+    assert captured["env"]["LOOP_CHECK_MAX"] == "8"
+    assert ext.resolve() in captured["wrap"]["ro"] and repo.resolve() in captured["wrap"]["ro"]
 
 
 def test_agent_dir_provider(tmp_path):

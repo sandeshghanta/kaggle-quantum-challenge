@@ -12,7 +12,7 @@ from loop.programs import pack
 from substrate import connect
 from substrate.cli import Substrate
 
-ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v1"
+ROLE_DIR = config.REPO / "roles" / "lab_assistant" / "v2"
 MARSYAS_DIR = config.REPO / "seeds" / "marsyas_invsqrt"
 
 
