@@ -24,6 +24,7 @@ let
     Group = "research-loop";
     WorkingDirectory = repo;
     KillSignal = "SIGTERM";
+    KillMode = "mixed";       # SIGTERM only the main process so it can finish its job; children are left running
     TimeoutStopSec = 900;
     Restart = "on-failure";
     RestartSec = 10;
