@@ -84,3 +84,10 @@ def test_head_allowed_like_get(server):
 
 def test_default_host_is_loopback():
     assert statuspage.parse_args([]).host == "127.0.0.1" and statuspage.parse_args([]).port == 8080
+
+
+def test_real_dashboard_reads_the_two_served_files():
+    html = statuspage.DEFAULT_INDEX.read_text()
+    assert '"live.json"' in html and '"researcher.json"' in html and "snapshot.json" not in html
+    for section in ("Lab assistants now", "Recent activity", "Live updater not running", "No researcher visit yet"):
+        assert section in html

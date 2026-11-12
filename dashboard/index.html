@@ -56,17 +56,36 @@ td.num, th.num { text-align: right; }
 .beliefs h3 { margin: 0; font-size: .85rem; font-family: var(--display); }
 .q { font-size: .92rem; margin: 0; }
 .empty { color: var(--muted); font-size: .9rem; }
+tr.stale td { opacity: .5; }
+.pill.run { color: var(--accent); } .pill.idle { color: var(--muted); } .pill.stale { color: var(--warn); }
+.feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; font-size: .88rem; }
+.feed li { display: grid; grid-template-columns: 4.6rem 6.2rem 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.feed .t { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
+.feed .txt { min-width: 0; overflow-wrap: anywhere; }
+.stamps { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+@media (max-width: 520px) { .feed li { grid-template-columns: 4rem 1fr; } .feed li .pill { grid-column: 2; justify-self: start; } .feed .txt { grid-column: 1 / -1; } }
 @media (prefers-reduced-motion: no-preference) { .fill { transition: width .4s ease; } }
 </style>
 
 <div class="wrap">
   <header>
     <h1>invsqrt research loop</h1>
-    <span class="stamp" id="stamp">loading snapshot</span>
+    <span class="stamps"><span class="stamp" id="stamp-live">live: loading</span>
+      <span class="stamp" id="stamp-res">researcher: loading</span></span>
   </header>
   <div class="banner" id="banner" hidden></div>
 
   <section class="kpis" id="kpis" aria-label="Where we stand"></section>
+
+  <section class="panel" aria-labelledby="h-work">
+    <h2 id="h-work">Lab assistants now</h2>
+    <div class="table-box"><table id="workers"></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-act">
+    <h2 id="h-act">Recent activity</h2>
+    <ul class="feed" id="activity"></ul>
+  </section>
 
   <section class="panel" aria-labelledby="h-trace">
     <h2 id="h-trace">Best cost over time</h2>
@@ -117,6 +136,7 @@ const outcomeClass = { met: "good", missed: "bad", open: "warn" };
 const callClass = { exploit: "good", "scale up": "good", restarted: "warn", stalled: "warn", retired: "bad", new: "", "long shot": "" };
 
 function kpis(s) {
+  if (!s) { $("kpis").innerHTML = `<p class="empty">Live updater not running. No score yet.</p>`; return; }
   const sc = s.score, r = ratio(sc.reference_cost, sc.best_cost);
   const vsPublic = r && sc.public_best_ratio ? (r / sc.public_best_ratio - 1) : null;
   const vsTop = r && sc.top_ratio ? (r / sc.top_ratio - 1) : null;
@@ -134,6 +154,7 @@ function kpis(s) {
 }
 
 function chart(s) {
+  if (!s) { $("chart").innerHTML = `<p class="empty">Live updater not running.</p>`; return; }
   const pts = (s.history || []).filter(p => p.cost);
   if (pts.length < 2) { $("chart").innerHTML = `<p class="empty">The trace appears after the first two measurements.</p>`; return; }
   const W = 960, H = 260, L = 70, R = 20, T = 18, B = 34;
@@ -164,26 +185,60 @@ function chart(s) {
   </svg>`;
 }
 
-function health(s) {
-  const r = s.health.researcher, a = s.health.assistants, v = s.health.verifier;
+function health(live, res) {
+  const r = res && res.researcher;
   const meter = (label, val) => `<div class="meter"><span>${label}</span>
-    <span class="track"><span class="fill" style="width:${Math.min(100, val ?? 0)}%"></span><span class="cap" style="left:${r.cap_pct}%"></span></span>
+    <span class="track"><span class="fill" style="width:${Math.min(100, val ?? 0)}%"></span>${r.cap_pct != null ? `<span class="cap" style="left:${r.cap_pct}%"></span>` : ""}</span>
     <span class="num">${val == null ? "–" : Math.round(val) + "%"}</span></div>`;
-  $("budget").innerHTML = meter("5 h", r.five_hour_pct) + meter("7 d", r.seven_day_pct) +
-    `<dl class="facts"><dt>Cap</dt><dd class="num">${r.cap_pct}%</dd><dt>Visits, 24 h</dt><dd class="num">${r.visits_24h ?? "–"}</dd>
-     <dt>Next visit</dt><dd class="num">${esc(when(r.next_visit))}</dd></dl>`;
+  $("budget").innerHTML = r ? meter("5 h", r.five_hour_pct) + meter("7 d", r.seven_day_pct) +
+    `<dl class="facts"><dt>Cap</dt><dd class="num">${r.cap_pct ?? "–"}%</dd><dt>Visits, 24 h</dt><dd class="num">${r.visits_24h ?? "–"}</dd>
+     <dt>Last visit</dt><dd class="num">${esc(when(r.last_visit))}</dd>
+     <dt>Next visit</dt><dd class="num">${esc(when(r.next_visit))}</dd></dl>`
+    : `<p class="empty">No researcher visit yet.</p>`;
+  const none = `<p class="empty">Live updater not running.</p>`;
+  if (!live) { $("assistants").innerHTML = none; $("verifier").innerHTML = none; return; }
+  const a = live.health.assistants, v = live.health.verifier, sp = live.health.spend;
   $("assistants").innerHTML = `<dt>Running</dt><dd class="num">${a.running ?? "–"}</dd>
     <dt>Attempts, 24 h</dt><dd class="num">${fmt(a.attempts_24h)}</dd>
     <dt>Hit rate</dt><dd class="num">${pct(a.hit_rate)}</dd>
-    <dt>Fail the sweep</dt><dd class="num">${pct(a.sweep_fail_rate)}</dd>`;
+    <dt>Fail the sweep</dt><dd class="num">${pct(a.sweep_fail_rate)}</dd>
+    <dt>Qwen tokens out, 24 h</dt><dd class="num">${fmt(sp.qwen_tokens_out_24h)}</dd>`;
   $("verifier").innerHTML = `<dt>Waiting</dt><dd class="num">${v.backlog ?? "–"}</dd>
     <dt>Oldest wait</dt><dd class="num">${v.oldest_wait_min == null ? "–" : v.oldest_wait_min.toFixed(1) + " min"}</dd>
-    <dt>Full checks, 24 h</dt><dd class="num">${v.full_checks_24h ?? "–"}</dd>`;
+    <dt>Full checks, 24 h</dt><dd class="num">${v.full_checks_24h ?? "–"}</dd>
+    <dt>CPU hours, 24 h</dt><dd class="num">${sp.cpu_seconds_24h == null ? "–" : (sp.cpu_seconds_24h / 3600).toFixed(1)}</dd>`;
+}
+
+const dur = sec => sec == null || sec < 0 ? "–" : sec < 90 ? Math.round(sec) + " s" : sec < 5400 ? Math.round(sec / 60) + " min" : (sec / 3600).toFixed(1) + " h";
+const ago = t => t ? dur((Date.now() - Date.parse(t)) / 1000) + " ago" : "never";
+const shortId = id => id ? String(id).replace(/^sha256:/, "").slice(0, 8) : "–";
+
+function workers(live) {
+  if (!live) { $("workers").innerHTML = `<tbody><tr><td class="empty">Live updater not running.</td></tr></tbody>`; return; }
+  const rows = (live.workers || []).map(w => {
+    const thinking = w.state === "thinking" && !w.stale;
+    const pill = w.stale ? `<span class="pill stale">no heartbeat</span>`
+      : `<span class="pill ${thinking ? "run" : "idle"}">${esc(w.state)}</span>`;
+    const running = thinking && w.started_at ? dur((Date.now() - Date.parse(w.started_at)) / 1000) : "–";
+    return `<tr class="${w.stale ? "stale" : ""}"><td class="num">${esc(w.worker)}</td><td>${pill}</td><td>${esc(w.island ?? "–")}</td>
+      <td class="num">${esc(shortId(w.parent))}</td><td class="num">${running}</td><td class="num">${w.turns ?? "–"}</td>
+      <td>${esc(w.last_tool ?? "–")}</td><td class="num">${fmt(w.tokens_out)}</td></tr>`; }).join("");
+  $("workers").innerHTML = `<thead><tr><th class="num">Worker</th><th>State</th><th>Island</th><th class="num">Parent</th>
+    <th class="num">Running for</th><th class="num">Turns</th><th>Last tool</th><th class="num">Tokens out</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="8" class="empty">No worker heartbeats yet.</td></tr>`}</tbody>`;
+}
+
+const kindClass = { "new best": "good", committed: "run", rejected: "bad", measured: "", direction: "warn", lessons: "warn" };
+function activity(live) {
+  if (!live) { $("activity").innerHTML = `<li><span class="empty">Live updater not running.</span></li>`; return; }
+  const rows = (live.activity || []).map(a => `<li><span class="t">${esc(new Date(a.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }))}</span>
+    <span><span class="pill ${kindClass[a.kind] ?? ""}">${esc(a.kind)}</span></span><span class="txt">${esc(a.text)}</span></li>`).join("");
+  $("activity").innerHTML = rows || `<li><span class="empty">Nothing has happened yet.</span></li>`;
 }
 
 function direction(s) {
-  const d = s.current_direction;
-  if (!d) { $("direction").innerHTML = `<p class="empty">No direction yet. The first researcher visit sets one.</p>`; return; }
+  const d = s && s.current_direction;
+  if (!d) { $("direction").innerHTML = `<p class="empty">No researcher visit yet. The first visit sets a direction.</p>`; return; }
   $("direction").innerHTML = `<blockquote>${esc(d.brief)}</blockquote>
     <p><b>Why</b> ${esc(d.why)}</p>
     <p><b>Expect</b> ${esc(d.prediction)} <span class="num">(${esc(d.progress)})</span></p>
@@ -191,7 +246,7 @@ function direction(s) {
 }
 
 function islands(s) {
-  const rows = (s.islands || []).map(i => `<tr><td class="num">${esc(i.id)}</td><td>${esc(i.idea)}</td>
+  const rows = ((s && s.islands) || []).map(i => `<tr><td class="num">${esc(i.id)}</td><td>${esc(i.idea)}</td>
     <td class="num">${i.assistants ?? "–"}</td><td class="num">${fmt(i.best_cost)}</td>
     <td class="num ${i.trend_pct < 0 ? "good" : ""}">${i.trend_pct == null ? "–" : (i.trend_pct > 0 ? "+" : "") + i.trend_pct.toFixed(1) + "%"}</td>
     <td><span class="pill ${callClass[i.call] ?? ""}">${esc(i.call)}</span></td></tr>`).join("");
@@ -200,43 +255,71 @@ function islands(s) {
 }
 
 function decisions(s) {
-  const rows = (s.decisions || []).map(d => `<tr><td class="num">${esc(d.id)}</td><td class="num">${esc(when(d.t))}</td>
+  const rows = ((s && s.decisions) || []).map(d => `<tr><td class="num">${esc(d.id)}</td><td class="num">${esc(when(d.t))}</td>
     <td>${esc(d.brief)}</td><td>${esc(d.prediction)}</td>
     <td><span class="pill ${outcomeClass[d.outcome] ?? ""}">${esc(d.outcome)}</span> ${esc(d.detail)}</td>
     <td class="num">${fmt(d.tokens)}</td></tr>`).join("");
   $("decisions").innerHTML = `<thead><tr><th>#</th><th>When</th><th>Direction</th><th>Prediction</th><th>Outcome</th><th class="num">Opus tokens</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="6" class="empty">No decisions yet.</td></tr>`}</tbody>`;
-  const ds = s.decision_summary;
+  const ds = s && s.decision_summary;
   $("decision-summary").textContent = ds && ds.closed
     ? `${ds.paid_off} of ${ds.closed} closed directions paid off · about ${fmt(ds.tokens_per_improvement)} Opus tokens per improvement`
     : "";
 }
 
 function beliefs(s) {
-  const b = s.beliefs || {};
+  const b = (s && s.beliefs) || {};
   const list = (title, items, cls) => `<div><h3 class="${cls}">${title}</h3>${(items && items.length)
     ? `<ul>${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="empty">Nothing yet.</p>`}</div>`;
   $("beliefs").innerHTML = list("Working", b.working, "good") + list("Not working", b.not_working, "bad") + list("Open questions", b.open_questions, "warn");
 }
 
 function questions(s) {
-  const q = s.questions || [];
+  const q = (s && s.questions) || [];
   $("questions").innerHTML = q.length
     ? q.map(x => `<p class="q">${esc(x.text)} <span class="stamp">· ${esc(when(x.t))}</span></p>`).join("") +
       `<p class="empty">Answer through the admin chat.</p>`
     : `<p class="empty">No open questions.</p>`;
 }
 
-function render(s) {
-  $("stamp").textContent = `snapshot ${when(s.generated_at)} · next refresh at the next researcher visit`;
-  const banner = $("banner");
-  banner.hidden = !s.example;
-  banner.textContent = s.example ? "Example data. The real numbers replace this at the first researcher visit." : "";
-  kpis(s); chart(s); health(s); direction(s); islands(s); decisions(s); beliefs(s); questions(s);
+const state = { live: null, res: null, liveAt: null, resAt: null };
+
+function stamps() {
+  const mk = (label, at, gen, missing, staleSec) => {
+    if (!at) return [missing, "warn"];
+    const age = (Date.now() - Date.parse(gen)) / 1000;
+    return [`${label} updated ${dur(age)} ago`, age > staleSec ? "warn" : ""];
+  };
+  const [lt, lc] = mk("live", state.live, state.live && state.live.generated_at, "live: no data", 60);
+  const [rt, rc] = mk("researcher", state.res, state.res && state.res.generated_at, "researcher: none yet", 1e9);
+  $("stamp-live").textContent = lt; $("stamp-live").className = "stamp " + lc;
+  $("stamp-res").textContent = rt; $("stamp-res").className = "stamp " + rc;
 }
 
-fetch("snapshot.json", { cache: "no-store" })
-  .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-  .then(render)
-  .catch(() => { $("stamp").textContent = "No snapshot yet. It appears after the first researcher visit."; });
+function render() {
+  const live = state.live, res = state.res;
+  const banner = $("banner");
+  const ex = [live, res].some(x => x && x.example === true);
+  banner.hidden = !ex;
+  banner.textContent = ex ? "Example data." : "";
+  kpis(live); workers(live); activity(live); chart(live); health(live, res);
+  direction(res); islands(res); decisions(res); beliefs(res); questions(res);
+  stamps();
+}
+
+async function load(name, key, atKey) {
+  try {
+    const r = await fetch(name, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    state[key] = await r.json();
+    state[atKey] = state[key] ? Date.now() : null;
+  } catch (e) { state[key] = null; }
+  render();
+}
+const loadLive = () => load("live.json", "live", "liveAt");
+const loadRes = () => load("researcher.json", "res", "resAt");
+loadLive(); loadRes();
+setInterval(loadLive, 15000);
+setInterval(loadRes, 60000);
+setInterval(() => { workers(state.live); stamps(); }, 1000);
 </script>
