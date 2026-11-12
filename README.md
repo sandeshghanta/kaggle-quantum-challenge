@@ -28,6 +28,17 @@ The researcher directs the lab assistants through the substrate, the verifier ju
 The parts never call each other: they coordinate only by reading and writing the substrate, so
 there is no central orchestrator and each part can be stopped or replaced independently.
 
+### Islands and parent selection
+
+Every candidate solution is a **program**: generator code that builds a circuit. Programs belong to
+**islands**, each island pursuing one idea (one line of attack) and carrying instructions written by
+the researcher for the assistants. Islands exist only in the loop, derived from events; the substrate knows nothing about
+them. A lab assistant picks an island by weight, then a parent within it, favouring good programs
+that few others are already working from. There is no central assignment: every announcement lowers
+the parent's weight for the next assistant that reads the log, so concurrent assistants spread out
+on their own. The researcher drives island weights, migration, restarts from a chosen program, and
+retirement.
+
 ### Researcher
 
 The researcher is the only part that spends the scarce strong-model budget, so it runs a few times
@@ -73,16 +84,6 @@ checker, in tiers, so the expensive check runs only on candidates that might mat
 - **Full check**: many shots per input, one salt at a time, stopping at the first failing salt.
 
 Every outcome is recorded as an event, and "not better" means not fully verified, not dropped.
-
-### Islands and parent selection
-
-Programs belong to **islands**, each pursuing one idea and carrying instructions written for the
-assistants. Islands exist only in the loop, derived from events; the substrate knows nothing about
-them. A lab assistant picks an island by weight, then a parent within it, favouring good programs
-that few others are already working from. There is no central assignment: every announcement lowers
-the parent's weight for the next assistant that reads the log, so concurrent assistants spread out
-on their own. The researcher drives island weights, migration, restarts from a chosen program, and
-retirement.
 
 ### Substrate
 
