@@ -71,7 +71,8 @@ in {
   config = lib.mkIf cfg.enable {
     users.groups = lib.genAttrs [ "substrate" "substrate-clients" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ] (_: { });
     users.users = lib.genAttrs [ "substrate" "rl-deploy" "rl-worker" "rl-verifier" "rl-seed" ]
-      (u: { isSystemUser = true; group = u; });
+      (u: { isSystemUser = true; group = u; }
+          // lib.optionalAttrs (lib.hasPrefix "rl-" u && u != "rl-deploy") { extraGroups = [ "substrate-clients" ]; });
     programs.nix-ld.enable = true;
     environment.systemPackages = [ update ];
 
