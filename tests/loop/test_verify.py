@@ -31,7 +31,7 @@ def commit_bundle(sub, tmp_path, gen: str) -> tuple[str, str]:
 
 def run(sub, tmp_path, gen, **kw):
     program, cause = commit_bundle(sub, tmp_path, gen)
-    args = {"island_best_quick": None, "salts": [1], "max_workers": None, "full_max_x": 4096} | kw
+    args = {"island_best_sweep": None, "salts": [1], "max_workers": None, "full_max_x": 4096} | kw
     return program, verify.evaluate(sub, program, workdir=tmp_path / "work", cause=cause, **args)
 
 
@@ -44,8 +44,8 @@ def test_quick_check_reference(tmp_path, sub):
     program, _ = commit_bundle(sub, tmp_path, REFERENCE)
     unpack(sub.get_blob(program), tmp_path / "w")
     r = build(tmp_path / "w", tmp_path / "w" / "c.kmb")
-    q = verify.quick_check(r.kmb)
-    assert q.passes and q.metrics["Q"] == 260 and q.metrics["T"] == 7735 and q.shots == 65536 * 64
+    q = verify.sweep_check(r.kmb)
+    assert q.passes and q.metrics["Q"] == 260 and q.metrics["T"] == 7735 and q.shots == 3133452
 
 
 def test_build_failure_is_rejected_with_traceback(tmp_path, sub):  # Review Focus 1
@@ -71,7 +71,7 @@ def test_wrong_circuit_fails_quick_check(tmp_path, sub):
 
 
 def test_not_better_than_island_best(tmp_path, sub):
-    program, out = run(sub, tmp_path, REFERENCE, island_best_quick=1.0)
+    program, out = run(sub, tmp_path, REFERENCE, island_best_sweep=1.0, audit_rate=0.0)
     [rej] = events(sub, program, "candidate.rejected")
     assert rej.payload["reason"] == "not_better" and out.cost > 1.0
 
@@ -85,10 +85,10 @@ def test_improvement_gets_full_check_and_measurement(tmp_path, sub):
     assert p["metrics"]["Q"] == 260 and p["shots"] == 2 * 4096 * 64
 
 
-def test_measurement_records_quick_cost(tmp_path, sub):
+def test_measurement_records_sweep_cost(tmp_path, sub):
     program, out = run(sub, tmp_path, REFERENCE)
     [m] = events(sub, program, "candidate.measured")
-    assert m.payload["metrics"]["quick_cost"] > 0 and m.payload["metrics"]["quick_cost"] != m.payload["cost"]
+    assert m.payload["metrics"]["sweep_cost"] > 0
 
 
 def test_identical_circuit_is_rejected_as_duplicate(tmp_path, sub):
@@ -110,7 +110,61 @@ def test_full_check_failing_every_salt_is_recorded(tmp_path, sub, monkeypatch): 
 
 
 def test_check_timeout_is_a_failure_not_a_hang(tmp_path, sub, monkeypatch):  # review I3
-    monkeypatch.setattr(verify, "QUICK_TIMEOUT", 0.01)
+    monkeypatch.setattr(verify, "SWEEP_TIMEOUT", 0.01)
     program, out = run(sub, tmp_path, REFERENCE)
     [rej] = events(sub, program, "candidate.rejected")
     assert rej.payload["reason"] == "quick_check_failed" and "timed out" in rej.payload["detail"]
+    assert rej.payload["tier"] == "sweep"
+
+
+LARGE_X_WRONG = REFERENCE.replace(
+    "        _phase_by_bits(builder, y1)\n",
+    "        _phase_by_bits(builder, y1)\n        builder.z(x[width - 1])  # flips the phase only for x >= 2**21\n")
+
+
+def test_circuit_wrong_only_at_large_x_is_stopped_by_the_sweep(tmp_path, sub):  # Review Focus 5
+    assert LARGE_X_WRONG != REFERENCE
+    program, out = run(sub, tmp_path, LARGE_X_WRONG)
+    [rej] = events(sub, program, "candidate.rejected")
+    assert rej.payload["reason"] == "quick_check_failed" and rej.payload["tier"] == "sweep"
+    assert events(sub, program, "candidate.measured") == []
+
+
+@pytest.fixture(scope="module")
+def ref_sweep_cost(tmp_path_factory):
+    from loop.programs import build
+    d = tmp_path_factory.mktemp("ref")
+    (d / "gen.py").write_text(REFERENCE)
+    return verify.sweep_check(build(d, d / "c.kmb").kmb).cost
+
+
+def test_gate_margin(tmp_path, sub, ref_sweep_cost):
+    program, out = run(sub, tmp_path, REFERENCE, island_best_sweep=ref_sweep_cost / 1.03, audit_rate=0.0)
+    assert out.kind == "measured"  # 3% worse: within the 5% margin, so fully checked
+
+
+def test_gate_rejects_clearly_worse_with_estimate(tmp_path, sub, ref_sweep_cost):
+    program, out = run(sub, tmp_path, REFERENCE, island_best_sweep=ref_sweep_cost / 1.10, audit_rate=0.0)
+    [rej] = events(sub, program, "candidate.rejected")
+    assert rej.payload["reason"] == "not_better" and rej.payload["tier"] == "gate"
+    assert rej.payload["estimate"]["cost"] == pytest.approx(ref_sweep_cost) and rej.payload["estimate"]["Q"] == 260
+
+
+def test_audit_fully_checks_a_would_be_rejection(tmp_path, sub, ref_sweep_cost):
+    program, out = run(sub, tmp_path, REFERENCE, island_best_sweep=ref_sweep_cost / 1.10, audit_rate=1.0)
+    [m] = events(sub, program, "candidate.measured")
+    assert m.payload["metrics"]["audited"] is True
+
+
+def test_full_check_stops_at_first_failing_salt(tmp_path, sub, monkeypatch):
+    real = verify._run_verifier
+
+    def fail_salt_1(kmb, extra, timeout):
+        if "--salt" in extra and extra[extra.index("--salt") + 1] == "1":
+            return verify.CheckResult(False, None, {"seconds": 0.1}, 0, [], "phase error at x=7")
+        return real(kmb, extra, timeout)
+
+    monkeypatch.setattr(verify, "_run_verifier", fail_salt_1)
+    program, out = run(sub, tmp_path, REFERENCE, salts=[1, 2, 3])
+    [m] = events(sub, program, "candidate.measured")
+    assert m.payload["passes"] is False and m.payload["seeds"] == [1]

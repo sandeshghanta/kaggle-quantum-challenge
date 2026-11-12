@@ -53,11 +53,11 @@ def island_best(sub: Substrate, island: str) -> float | None:
     return min(costs) if costs else None
 
 
-def island_best_quick(sub: Substrate, island: str) -> float | None:
-    """Quick-check cost of the island's best measured candidate (comparable with a new quick check)."""
+def island_best_sweep(sub: Substrate, island: str) -> float | None:
+    """Sweep cost of the island's best measured candidate (comparable with a new sweep estimate)."""
     progs = set(members(sub, island))
     ranked = [c for c in _frontier(sub) if c.program in progs]
-    return ranked[0].metrics.get("quick_cost") if ranked else None
+    return ranked[0].metrics.get("sweep_cost") if ranked else None
 
 
 def island_of(sub: Substrate, program: str) -> str | None:

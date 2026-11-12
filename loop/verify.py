@@ -1,8 +1,15 @@
-"""Quick and full verification of invsqrt circuits, and recording the outcome."""
+"""Tiered verification of invsqrt circuits, and recording the outcome.
+
+Tiers: build (sandboxed) -> duplicate check -> sweep (every x, 1 shot; validates and estimates cost)
+-> gate (not_better only if the estimate is more than DELTA worse than the island's best; a random
+AUDIT_RATE of would-be rejections are fully checked anyway) -> full check (64 shots per x), salt by
+salt, stopping at the first failing salt.
+"""
 
 from __future__ import annotations
 
 import json
+import random
 import resource
 import shutil
 import subprocess
@@ -16,9 +23,11 @@ from loop.programs import build, unpack
 from substrate.cli import Substrate
 
 BUILD_TIMEOUT = 120
-QUICK_TIMEOUT = 1800          # a sane circuit takes seconds; a gate-count blow-up must not hang the verifier
+SWEEP_TIMEOUT = 1800          # a sane circuit takes seconds; a gate-count blow-up must not hang the verifier
 FULL_TIMEOUT_PER_SALT = 4 * 3600
-QUICK_MAX_X = 65536
+SWEEP_BATCH = 292             # 3,133,452 = 2^2 * 3 * 7^2 * 73^2 shots: the default batch (256) does not divide it
+DELTA = 0.05
+AUDIT_RATE = 0.05
 VERSION = "v1"
 
 
@@ -67,14 +76,20 @@ def _workers(max_workers: int | None) -> list[str]:
     return ["--max-workers", str(max_workers)] if max_workers else []
 
 
-def quick_check(kmb: Path, *, max_workers: int | None = None) -> CheckResult:
-    return _run_verifier(kmb, ["--max-x", str(QUICK_MAX_X), *_workers(max_workers)], QUICK_TIMEOUT)
+def sweep_check(kmb: Path, *, max_workers: int | None = None) -> CheckResult:
+    """Every x in the domain, one shot each: validates the whole domain and estimates the cost."""
+    return _run_verifier(kmb, ["--shots-per-x", "1", "--batch-size", str(SWEEP_BATCH), *_workers(max_workers)],
+                         SWEEP_TIMEOUT)
 
 
 def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
                max_x: int | None = None) -> CheckResult:
     extra = _workers(max_workers) + (["--max-x", str(max_x)] if max_x else [])
-    results = [_run_verifier(kmb, ["--salt", str(s), *extra], FULL_TIMEOUT_PER_SALT) for s in salts]
+    results = []
+    for s in salts:  # stop at the first failing salt: one failure already proves the circuit wrong
+        results.append(_run_verifier(kmb, ["--salt", str(s), *extra], FULL_TIMEOUT_PER_SALT))
+        if not results[-1].passes:
+            break
     passing = [r for r in results if r.passes]
     worst = max(passing, key=lambda r: r.cost) if passing else None
     failed = next((r for r in results if not r.passes), None)
@@ -83,14 +98,15 @@ def full_check(kmb: Path, *, salts: list[int], max_workers: int | None = None,
         cost=worst.cost if worst else None,
         metrics=(worst or results[0]).metrics if results else {},
         shots=sum(r.shots for r in results),
-        seeds=list(salts),
+        seeds=list(salts[:len(results)]),
         error=failed.error if failed else None,
         raw={"per_salt": [r.raw for r in results]},
     )
 
 
-def evaluate(sub: Substrate, program: str, *, island_best_quick: float | None, salts: list[int],
-             max_workers: int | None, workdir: Path, cause: str, full_max_x: int | None = None) -> Outcome:
+def evaluate(sub: Substrate, program: str, *, island_best_sweep: float | None, salts: list[int],
+             max_workers: int | None, workdir: Path, cause: str, full_max_x: int | None = None,
+             delta: float = DELTA, audit_rate: float = AUDIT_RATE, rng: random.Random | None = None) -> Outcome:
     actor = config.actor("verifier", VERSION)
     subject = "prog:" + program
     cpu0 = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -103,35 +119,46 @@ def evaluate(sub: Substrate, program: str, *, island_best_quick: float | None, s
                                     "wall_seconds": round(time.monotonic() - t0, 2)},
                    subject="pool:cpu", actor=actor, cause=cause)
 
-    def reject(reason: str, detail: str, circuit: str | None = None, cost: float | None = None) -> Outcome:
+    rng = rng or random.Random()
+
+    def reject(reason: str, detail: str, tier: str, circuit: str | None = None,
+               estimate: CheckResult | None = None) -> Outcome:
         spend()
-        eid = sub.append("candidate.rejected", {"program": program, "circuit": circuit,
-                                                "reason": reason, "detail": detail[-4000:]},
-                         subject=subject, actor=actor, cause=cause)
-        return Outcome("rejected", eid, cost)
+        payload = {"program": program, "circuit": circuit, "reason": reason, "detail": detail[-4000:], "tier": tier}
+        if estimate is not None and estimate.cost is not None:
+            payload["estimate"] = {"cost": estimate.cost, "Q": estimate.metrics.get("Q"), "T": estimate.metrics.get("T")}
+        eid = sub.append("candidate.rejected", payload, subject=subject, actor=actor, cause=cause)
+        return Outcome("rejected", eid, estimate.cost if estimate else None)
 
     shutil.rmtree(workdir, ignore_errors=True)
     unpack(sub.get_blob(program), workdir)
     built = build(workdir, workdir / "circuit.kmb", timeout=BUILD_TIMEOUT)
     if not built.ok:
-        outcome = reject("build_failed", built.stderr or "generator exited without writing a circuit")
+        outcome = reject("build_failed", built.stderr or "generator exited without writing a circuit", "build")
     else:
         circuit = sub.put_blob(built.kmb.read_bytes())
         already = _measured_circuit(sub, circuit)
         if already is not None:
-            return reject("duplicate", f"circuit identical to one already measured (program {already})", circuit)
-        quick = quick_check(built.kmb, max_workers=max_workers)
-        if not quick.passes:
-            outcome = reject("quick_check_failed", quick.error or "", circuit)
-        elif island_best_quick is not None and quick.cost >= island_best_quick:
+            return reject("duplicate", f"circuit identical to one already measured (program {already})",
+                          "duplicate", circuit)
+        sweep = sweep_check(built.kmb, max_workers=max_workers)
+        worse = (island_best_sweep is not None and sweep.passes
+                 and sweep.cost > island_best_sweep * (1 + delta))
+        audited = worse and rng.random() < audit_rate
+        if not sweep.passes:
+            outcome = reject("quick_check_failed", sweep.error or "", "sweep", circuit, sweep)
+        elif worse and not audited:
             outcome = reject("not_better",
-                             f"quick cost {quick.cost:.6g} >= island best quick cost {island_best_quick:.6g}",
-                             circuit, quick.cost)
+                             f"sweep estimate {sweep.cost:.6g} > island best {island_best_sweep:.6g} x {1 + delta}",
+                             "gate", circuit, sweep)
         else:
             full = full_check(built.kmb, salts=salts, max_workers=max_workers, max_x=full_max_x)
-            cost = full.cost if full.cost is not None else quick.cost
+            cost = full.cost if full.cost is not None else sweep.cost
+            metrics = full.metrics | {"sweep_cost": sweep.cost}
+            if audited:
+                metrics["audited"] = True  # a would-be gate rejection, checked to measure the gate's error
             payload = {"program": program, "circuit": circuit, "cost": cost, "passes": full.passes,
-                       "benchmark": config.BENCHMARK, "metrics": full.metrics | {"quick_cost": quick.cost},
+                       "benchmark": config.BENCHMARK, "metrics": metrics,
                        "shots": full.shots,
                        "seeds": full.seeds, "verifier": config.verifier_tag(), "cost_basis": config.COST_BASIS}
             if not full.passes:

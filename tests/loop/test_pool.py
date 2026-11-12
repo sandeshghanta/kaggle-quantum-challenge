@@ -27,7 +27,7 @@ def member(sub, ch, cost=None, island="main", quick=None):
         sub.append("candidate.measured", {"program": prog, "circuit": "sha256:" + ch.upper().lower() * 63 + "0",
                                           "cost": cost, "passes": True, "benchmark": "invsqrt",
                                           "verifier": config.verifier_tag(), "cost_basis": "invsqrt/QxC/v1",
-                                          "metrics": {"quick_cost": quick} if quick else {}},
+                                          "metrics": {"sweep_cost": quick} if quick else {}},
                    subject="prog:" + prog, actor=ACTOR)
     return prog
 
@@ -84,10 +84,10 @@ def test_pick_island_weighted_and_active_only(sub):
     assert {pool.pick_island(sub, random.Random(i)) for i in range(20)} == {"main"}
 
 
-def test_island_best_quick_is_quick_cost_of_best_member(sub):
+def test_island_best_sweep_is_sweep_cost_of_best_member(sub):
     member(sub, "a", 300.0, quick=290.0)
     member(sub, "b", 100.0, quick=99.0)
-    assert pool.island_best_quick(sub, "main") == 99.0
+    assert pool.island_best_sweep(sub, "main") == 99.0
 
 
 def test_pick_island_skips_empty_islands(sub):
