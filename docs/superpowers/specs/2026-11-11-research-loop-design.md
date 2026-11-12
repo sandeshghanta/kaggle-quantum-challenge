@@ -44,8 +44,7 @@ the machinery.
 ## Anti-goals (failure even if it "works")
 
 - Agents all converging on one idea, so the search stops widening.
-- Burning a 5-hour Claude window in one go, or the loop starving the human's own
-  Claude Code / claude.ai use.
+- Burning a 5-hour Claude window in one go, or using more than 80% of either plan limit.
 - "Improvements" that pass local seeds but fail on the leaderboard's secret salt.
 - An agent writing to the event log or blob store outside `cli.py`, or damaging
   the machine.
@@ -282,9 +281,9 @@ simpler and avoid context build-up.
 ### Researcher visit
 
 - **When:** on a schedule (default every ~3 hours, my call) and only if the 5-hour and
-  weekly used-percentages are below thresholds that keep a reserve for the human (default
-  reserve: 30% of each window, my call; configurable). Also immediately on a
-  human-confirmed request from the admin chat, subject to the same check.
+  weekly used-percentages are both below 80% (the human's rule: the loop may use 80% of each
+  limit; the last 20% is a backup; configurable). Also immediately on a human-confirmed
+  request from the admin chat, subject to the same check.
 - **Reading the budget (my call):** usage percentages only arrive with a response, so
   there is no free pre-check. After every Claude run the researcher service appends
   `quota.observed`. The gate reads the latest one:
@@ -292,8 +291,8 @@ simpler and avoid context build-up.
     visit is allowed.
   - Otherwise, a visit is allowed only if the last observed value is below the threshold.
   - After every visit, the new values are recorded.
-  - The human's own use is invisible until the next observation. The reserve is the
-    margin for that.
+  - Usage by anything else on the plan is invisible until the next observation; the 20%
+    backup absorbs it.
 - **Input:** a prepared digest built by code, not by the model reading the repo:
   - frontier and trend per island
   - the decision log: past directions, predictions, outcomes
@@ -351,7 +350,7 @@ are made up). Only the researcher updates it:
 - **Chart:** best cost over time, marked with each researcher direction, with a
   public-best reference line.
 - **Health:**
-  - researcher budget (5 h / 7 d bars, reserve)
+  - researcher budget (5 h / 7 d bars, with the 80% cap marked)
   - lab assistants (count, attempts today, hit rate, smoke-fail rate)
   - verifier (queue, cores, RAM, timeouts)
 - **Researcher:**
